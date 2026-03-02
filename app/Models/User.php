@@ -1,0 +1,64 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Spatie\Permission\Traits\HasRoles;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class User extends Authenticatable
+{
+    use HasFactory, Notifiable, HasRoles;
+
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+        'image',
+        'position_id',
+    ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+        ];
+    }
+
+    // Accessor untuk mempermudah pemanggilan foto profil
+    public function getAvatarUrlAttribute()
+    {
+        return $this->image
+            ? asset('storage/' . $this->image)
+            : 'https://ui-avatars.com/api/?name=' . urlencode($this->name) . '&background=f97316&color=fff';
+    }
+
+    public function position(): BelongsTo
+    {
+        return $this->belongsTo(Position::class);
+    }
+
+    public function schedules(): HasMany
+    {
+        return $this->hasMany(Schedule::class);
+    }
+
+    public function attendances(): HasMany
+    {
+        return $this->hasMany(Attendance::class);
+    }
+
+    public function leaves(): HasMany
+    {
+        return $this->hasMany(Leave::class);
+    }
+}
