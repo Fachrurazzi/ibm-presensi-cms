@@ -8,10 +8,11 @@ use Illuminate\Notifications\Notifiable;
 use Spatie\Permission\Traits\HasRoles;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasRoles;
+    use HasFactory, Notifiable, HasRoles, HasApiTokens;
 
     protected $fillable = [
         'name',
@@ -19,6 +20,9 @@ class User extends Authenticatable
         'password',
         'image',
         'position_id',
+        'leave_qouta',
+        'join_date',
+        'cashable_leave'
     ];
 
     protected $hidden = [
@@ -31,6 +35,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'join_date' => 'date',
         ];
     }
 
@@ -60,5 +65,15 @@ class User extends Authenticatable
     public function leaves(): HasMany
     {
         return $this->hasMany(Leave::class);
+    }
+
+    public function getImageUrlAttribute()
+    {
+        return $this->image ? url('storage/' . $this->image) : null;
+    }
+
+    public function schedule()
+    {
+        return $this->hasOne(Schedule::class, 'user_id');
     }
 }

@@ -35,14 +35,13 @@
                             </div>
                         </div>
                     </div>
-                    {{-- Decorative Circle --}}
                     <div class="absolute -right-10 -bottom-10 w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
                 </div>
 
                 <div class="p-6 space-y-6">
                     {{-- Stats Card --}}
                     <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-slate-50 p-4 rounded-3xl border border-slate-100 shadow-sm group transition-all">
+                        <div class="bg-slate-50 p-4 rounded-3xl border border-slate-100 shadow-sm transition-all">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-emerald-500 text-xs">●</span>
                                 <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Absen Masuk
@@ -93,26 +92,60 @@
                         </div>
                     </div>
 
+                    {{-- Status Banner (Cuti / Banned) --}}
+                    @if ($isLeave)
+                        <div class="bg-indigo-50 border border-indigo-100 p-4 rounded-3xl flex items-center gap-4">
+                            <div
+                                class="bg-indigo-500 w-10 h-10 rounded-2xl flex items-center justify-center text-lg shadow-lg shadow-indigo-200">
+                                🏖️</div>
+                            <div>
+                                <h4 class="text-xs font-black text-indigo-900 uppercase tracking-tight">Status: Sedang
+                                    Cuti</h4>
+                                <p class="text-[9px] text-indigo-600 font-bold leading-tight">Absensi dinonaktifkan
+                                    sementara.</p>
+                            </div>
+                        </div>
+                    @elseif ($schedule->is_banned)
+                        <div class="bg-rose-50 border border-rose-100 p-4 rounded-3xl flex items-center gap-4">
+                            <div
+                                class="bg-rose-500 w-10 h-10 rounded-2xl flex items-center justify-center text-lg shadow-lg shadow-rose-200">
+                                🚫</div>
+                            <div>
+                                <h4 class="text-xs font-black text-rose-900 uppercase tracking-tight">Akun Ditangguhkan
+                                </h4>
+                                <p class="text-[9px] text-rose-600 font-bold leading-tight">Hubungi Admin untuk akses
+                                    kembali.</p>
+                            </div>
+                        </div>
+                    @endif
+
                     {{-- Action Buttons --}}
                     <div class="space-y-3 pt-2">
+                        {{-- Button Tag Lokasi --}}
                         <button type="button" onclick="tagLocation()" id="tagBtn"
-                            class="w-full py-4 bg-slate-900 hover:bg-black text-white rounded-3xl font-bold flex items-center justify-center gap-3 shadow-lg active:scale-95 transition-all">
+                            @if ($isLeave || $schedule->is_banned) disabled @endif
+                            class="w-full py-4 bg-slate-900 hover:bg-black text-white rounded-3xl font-bold flex items-center justify-center gap-3 shadow-lg active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                             <span class="text-xl text-amber-400">📍</span>
                             <span class="tracking-wide">Tag Lokasi Saya</span>
                         </button>
 
+                        {{-- Button Kirim Presensi --}}
                         <button wire:click="store" wire:loading.attr="disabled"
-                            @if (!$insideRadius || !$latitude) disabled @endif
+                            @if (!$insideRadius || !$latitude || $isLeave || $schedule->is_banned) disabled @endif
                             class="w-full py-5 rounded-3xl font-black text-lg shadow-2xl uppercase tracking-wider transition-all flex items-center justify-center
-                            {{ !$insideRadius || !$latitude ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-orange-500 to-rose-500 text-white hover:brightness-110' }}">
+                            {{ !$insideRadius || !$latitude || $isLeave || $schedule->is_banned ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-orange-500 to-rose-500 text-white hover:brightness-110' }}">
 
                             <span wire:loading.remove>
-                                @if (!$latitude)
-                                    Pindai Lokasi Dulu
+                                @if ($isLeave)
+                                    🏖️ Sedang Libur Cuti
+                                @elseif($schedule->is_banned)
+                                    🚫 Akun Diblokir
+                                @elseif (!$latitude)
+                                    📍 Pindai Lokasi Dulu
                                 @elseif(!$insideRadius)
-                                    Luar Radius Kantor
+                                    🚩 Luar Radius Kantor
                                 @else
-                                    Kirim Presensi {{ $attendance ? 'Keluar' : 'Masuk' }}
+                                    🚀 Kirim Presensi {{ $attendance ? 'Keluar' : 'Masuk' }}
                                 @endif
                             </span>
 
@@ -132,7 +165,7 @@
             </div>
         </div>
 
-        {{-- Assets --}}
+        {{-- Assets & Scripts Tetap Sama --}}
         <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -193,7 +226,6 @@
 
                         const distance = map.distance([lat, lng], officePos);
                         const isInside = isWfa || (distance <= radiusSize);
-
                         @this.set('insideRadius', isInside);
 
                         if (isInside) {
@@ -204,7 +236,7 @@
                             Swal.fire({
                                 icon: 'success',
                                 title: 'Lokasi Cocok',
-                                text: 'GPS Terverifikasi. Silakan kirim absen.',
+                                text: 'GPS Terverifikasi.',
                                 timer: 1500,
                                 showConfirmButton: false,
                                 customClass: {
@@ -225,7 +257,6 @@
                                 }
                             });
                         }
-
                         btn.disabled = false;
                         btn.innerHTML = '<span class="text-xl text-amber-400">📍</span> Tag Lokasi Saya';
                     }, function(error) {

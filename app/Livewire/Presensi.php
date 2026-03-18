@@ -11,7 +11,7 @@ class Presensi extends Component
 {
     public $latitude, $longitude, $accuracy;
     public $insideRadius = false;
-    public $schedule, $attendance;
+    public $schedule, $attendance, $isLeave = false;
 
     public function mount()
     {
@@ -21,17 +21,26 @@ class Presensi extends Component
     public function loadData()
     {
         $userId = Auth::id();
-        // Memastikan schedule memuat relasi yang diperlukan
+        $today = Carbon::today();
+
+        // 1. Load Jadwal & Office
         $this->schedule = Schedule::with(['office', 'shift'])
             ->where('user_id', $userId)
             ->first();
 
+        // 2. Cek Absensi Hari Ini
         $this->attendance = Attendance::where('user_id', $userId)
-            ->whereDate('created_at', Carbon::today())
+            ->whereDate('created_at', $today)
             ->first();
+
+        // 3. Cek Apakah Sedang Cuti (Approved)
+        $this->isLeave = Leave::where('user_id', $userId)
+            ->where('status', 'approved')
+            ->whereDate('start_date', '<=', $today)
+            ->whereDate('end_date', '>=', $today)
+            ->exists();
     }
 
-    // Haversine Formula untuk kalkulasi jarak di server side
     private function getDistance($lat1, $lon1, $lat2, $lon2)
     {
         $earthRadius = 6371000; // Meter
@@ -54,29 +63,33 @@ class Presensi extends Component
         $userId = Auth::id();
         $now = now();
 
+        // VALIDASI PROTEKSI
         if (!$this->schedule) {
             $this->dispatch('alert', ['type' => 'error', 'message' => 'Jadwal kerja tidak ditemukan!']);
             return;
         }
 
-        // 1. Double Check Radius di Server
-        $distance = $this->getDistance(
-            $this->latitude,
-            $this->longitude,
-            $this->schedule->office->latitude,
-            $this->schedule->office->longitude
-        );
-
-        if (!$this->schedule->is_wfa && $distance > $this->schedule->office->radius) {
-            $this->dispatch('alert', ['type' => 'error', 'message' => 'Gagal: Anda berada diluar radius kantor.']);
-            $this->insideRadius = false;
+        if ($this->schedule->is_banned) {
+            $this->dispatch('alert', ['type' => 'error', 'message' => 'Akun Anda ditangguhkan (Banned).']);
             return;
         }
 
-        // 2. Eksekusi Presensi
+        if ($this->isLeave) {
+            $this->dispatch('alert', ['type' => 'error', 'message' => 'Gagal: Anda sedang dalam masa cuti.']);
+            return;
+        }
+
+        // VALIDASI RADIUS
+        $distance = $this->getDistance($this->latitude, $this->longitude, $this->schedule->office->latitude, $this->schedule->office->longitude);
+
+        if (!$this->schedule->is_wfa && $distance > $this->schedule->office->radius) {
+            $this->dispatch('alert', ['type' => 'error', 'message' => 'Di luar radius kantor (' . round($distance) . 'm)']);
+            return;
+        }
+
         try {
             if (!$this->attendance) {
-                // Proses Masuk
+                // Masuk
                 Attendance::create([
                     'user_id' => $userId,
                     'schedule_id' => $this->schedule->id,
@@ -88,28 +101,25 @@ class Presensi extends Component
                     'start_longitude' => $this->longitude,
                     'start_time' => $now,
                 ]);
-                $msg = 'Presensi masuk berhasil dicatat.';
+                $msg = 'Presensi masuk berhasil.';
             } else {
-                // Proses Keluar (Jika belum absen keluar)
+                // Keluar
                 if ($this->attendance->end_time) {
-                    $this->dispatch('alert', ['type' => 'error', 'message' => 'Anda sudah melakukan absen keluar hari ini.']);
+                    $this->dispatch('alert', ['type' => 'error', 'message' => 'Sudah absen keluar hari ini.']);
                     return;
                 }
-
                 $this->attendance->update([
                     'end_latitude' => $this->latitude,
                     'end_longitude' => $this->longitude,
                     'end_time' => $now,
                 ]);
-                $msg = 'Presensi keluar berhasil dicatat.';
+                $msg = 'Presensi keluar berhasil.';
             }
 
             $this->dispatch('alert', ['type' => 'success', 'message' => $msg]);
-
-            // Redirect setelah sukses agar data ter-refresh
             return redirect('admin/attendances');
         } catch (\Exception $e) {
-            $this->dispatch('alert', ['type' => 'error', 'message' => 'Terjadi kesalahan: ' . $e->getMessage()]);
+            $this->dispatch('alert', ['type' => 'error', 'message' => 'Error: ' . $e->getMessage()]);
         }
     }
 

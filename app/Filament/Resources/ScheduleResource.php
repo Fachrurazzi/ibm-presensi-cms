@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ScheduleResource\Pages;
 use App\Models\Schedule;
+use App\Models\User;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -16,6 +17,7 @@ class ScheduleResource extends Resource
     protected static ?string $model = Schedule::class;
     protected static ?string $navigationIcon = 'heroicon-o-calendar-days';
     protected static ?string $navigationGroup = 'Manajemen Absensi';
+    protected static ?int $navigationSort = 3;
 
     public static function getModelLabel(): string
     {
@@ -39,12 +41,28 @@ class ScheduleResource extends Resource
                                 Forms\Components\Select::make('user_id')
                                     ->label('Karyawan')
                                     ->relationship('user', 'name')
+                                    // Multiple hanya aktif saat Create
+                                    ->multiple(fn(string $context): bool => $context === 'create')
+                                    // Disabled saat Edit agar user tidak bisa diganti (keamanan data)
+                                    ->disabled(fn(string $context): bool => $context === 'edit')
                                     ->searchable()
                                     ->preload()
                                     ->required()
-                                    // Validasi agar satu user hanya punya satu jadwal aktif
-                                    ->unique(ignoreRecord: true)
-                                    ->columnSpanFull(),
+                                    ->dehydrated(true)
+                                    ->columnSpanFull()
+                                    ->helperText(
+                                        fn(string $context): string =>
+                                        $context === 'create'
+                                            ? 'Pilih satu atau lebih karyawan yang belum memiliki jadwal.'
+                                            : 'Karyawan tidak dapat diubah. Hapus dan buat baru jika terjadi kesalahan.'
+                                    )
+                                    // Hanya tampilkan user yang belum punya jadwal saat Create
+                                    ->options(function (string $context) {
+                                        if ($context === 'create') {
+                                            return User::whereDoesntHave('schedule')->pluck('name', 'id');
+                                        }
+                                        return User::pluck('name', 'id');
+                                    }),
 
                                 Forms\Components\Select::make('shift_id')
                                     ->label('Shift Kerja')
@@ -92,16 +110,12 @@ class ScheduleResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(
-                function (Builder $query) {
-                    $query->with(['user', 'shift', 'office']);
-
-                    // Jika bukan admin, hanya lihat punya sendiri
-                    if (!auth()->user()->hasRole(['super_admin', 'admin'])) {
-                        $query->where('user_id', auth()->id());
-                    }
+            ->modifyQueryUsing(function (Builder $query) {
+                $query->with(['user', 'shift', 'office']);
+                if (!auth()->user()->hasRole(['super_admin', 'admin'])) {
+                    $query->where('user_id', auth()->id());
                 }
-            )
+            })
             ->columns([
                 Tables\Columns\TextColumn::make('user.name')
                     ->label('Karyawan')
@@ -123,7 +137,7 @@ class ScheduleResource extends Resource
                     ->description(fn(Schedule $record): string => $record->is_wfa ? '🔓 Mode WFA' : '📍 Mode On-Site'),
 
                 Tables\Columns\IconColumn::make('is_banned')
-                    ->label('Blokir')
+                    ->label('Blokir Absensi')
                     ->boolean()
                     ->trueIcon('heroicon-o-x-circle')
                     ->falseIcon('heroicon-o-check-circle')
@@ -141,14 +155,17 @@ class ScheduleResource extends Resource
                 Tables\Filters\SelectFilter::make('office_id')
                     ->label('Kantor')
                     ->relationship('office', 'name'),
-                Tables\Filters\TernaryFilter::make('is_wfa')
-                    ->label('WFA'),
-                Tables\Filters\TernaryFilter::make('is_banned')
-                    ->label('Diblokir'),
+                Tables\Filters\TernaryFilter::make('is_wfa')->label('WFA'),
+                Tables\Filters\TernaryFilter::make('is_banned')->label('Blokir Absensi'),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
+            ])
+            ->bulkActions([
+                Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\DeleteBulkAction::make(),
+                ]),
             ]);
     }
 

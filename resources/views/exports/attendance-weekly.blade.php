@@ -50,44 +50,82 @@
                     AREA SUPERVISOR: {{ strtoupper($supervisor) }}
                 </td>
             </tr>
-            @foreach ($userGroup as $user)
-                @php $grandTotalUM = 0; @endphp
-                <tr>
-                    <td style="border: 1px solid #000; text-align: center; vertical-align: middle;">{{ $user->id }}
-                    </td>
-                    <td style="border: 1px solid #000; vertical-align: middle;">{{ $user->name }}</td>
-                    @foreach ($dates as $date)
-                        @php
-                            $attendance = $user->attendances->first(fn($item) => $item->created_at->isSameDay($date));
-                            $uangMakan = 0;
-                            if ($attendance && $attendance->start_time && $attendance->schedule_start_time) {
-                                // Logika: Jika datang sebelum/pas jam jadwal masuk
-                                if (
-                                    $attendance->start_time->format('H:i') <=
-                                    $attendance->schedule_start_time->format('H:i')
-                                ) {
-                                    $uangMakan = 15000;
-                                }
-                            }
-                            $grandTotalUM += $uangMakan;
-                        @endphp
-                        <td style="border: 1px solid #000; text-align: center; vertical-align: middle;">
-                            {{ $attendance?->start_time?->format('H:i') }}</td>
-                        <td style="border: 1px solid #000; text-align: center; vertical-align: middle;">
-                            {{ $attendance?->end_time?->format('H:i') }}</td>
-                        <td style="border: 1px solid #000; text-align: right; vertical-align: middle;">
-                            {{ $uangMakan ?: ($attendance ? '0' : '') }}</td>
+
+            @php
+                // TINGKAT 1: Kelompokkan berdasarkan Cabang terlebih dahulu
+                $groupedByCabang = $userGroup->groupBy(function ($u) {
+                    return $u->schedules->first()?->office?->name ?? '-';
+                });
+            @endphp
+
+            @foreach ($groupedByCabang as $cabangName => $cabangGroup)
+                @php
+                    // TINGKAT 2: Di dalam Cabang yang sama, kelompokkan berdasarkan Jabatan
+                    $groupedByJabatan = $cabangGroup->groupBy(function ($u) {
+                        return $u->position?->name ?? '-';
+                    });
+
+                    // Siapkan penghitung baris untuk Cabang
+                    $cabangRowIndex = 0;
+                @endphp
+
+                @foreach ($groupedByJabatan as $jabatanName => $jabatanGroup)
+                    {{-- Loop karyawan di dalam Jabatan tersebut --}}
+                    @foreach ($jabatanGroup as $jabatanRowIndex => $user)
+                        @php $grandTotalUM = 0; @endphp
+                        <tr>
+                            <td style="border: 1px solid #000; text-align: center; vertical-align: middle;">
+                                {{ $user->id }}</td>
+                            <td style="border: 1px solid #000; vertical-align: middle;">{{ $user->name }}</td>
+
+                            @foreach ($dates as $date)
+                                @php
+                                    $attendance = $user->attendances->first(
+                                        fn($item) => $item->created_at->isSameDay($date),
+                                    );
+                                    $uangMakan = 0;
+                                    if ($attendance && $attendance->start_time && $attendance->schedule_start_time) {
+                                        // Logika: Jika datang sebelum/pas jam jadwal masuk
+                                        if (
+                                            $attendance->start_time->format('H:i') <=
+                                            $attendance->schedule_start_time->format('H:i')
+                                        ) {
+                                            $uangMakan = 15000;
+                                        }
+                                    }
+                                    $grandTotalUM += $uangMakan;
+                                @endphp
+                                <td style="border: 1px solid #000; text-align: center; vertical-align: middle;">
+                                    {{ $attendance?->start_time?->format('H:i') }}</td>
+                                <td style="border: 1px solid #000; text-align: center; vertical-align: middle;">
+                                    {{ $attendance?->end_time?->format('H:i') }}</td>
+                                <td style="border: 1px solid #000; text-align: right; vertical-align: middle;">
+                                    {{ $uangMakan ?: ($attendance ? '0' : '') }}</td>
+                            @endforeach
+
+                            <td
+                                style="border: 1px solid #000; text-align: right; font-weight: bold; background-color: #f0f0f0; vertical-align: middle;">
+                                {{ $grandTotalUM }}</td>
+
+                            {{-- CETAK JABATAN: Hanya di baris pertama untuk setiap kelompok Jabatan --}}
+                            @if ($jabatanRowIndex === 0)
+                                <td rowspan="{{ $jabatanGroup->count() }}"
+                                    style="border: 1px solid #000; text-align: center; vertical-align: middle; background-color: #d1e9ff;">
+                                    {{ $jabatanName }}</td>
+                            @endif
+
+                            {{-- CETAK CABANG: Hanya di baris paling pertama untuk seluruh Cabang ini --}}
+                            @if ($cabangRowIndex === 0)
+                                <td rowspan="{{ $cabangGroup->count() }}"
+                                    style="border: 1px solid #000; text-align: center; vertical-align: middle; background-color: #d1e9ff;">
+                                    {{ $cabangName }}</td>
+                            @endif
+                        </tr>
+
+                        {{-- Tambah counter baris cabang setiap kali 1 karyawan selesai dirender --}}
+                        @php $cabangRowIndex++; @endphp
                     @endforeach
-                    <td
-                        style="border: 1px solid #000; text-align: right; font-weight: bold; background-color: #f0f0f0; vertical-align: middle;">
-                        {{ $grandTotalUM }}</td>
-                    <td
-                        style="border: 1px solid #000; text-align: center; vertical-align: middle; background-color: #d1e9ff;">
-                        {{ $user->position?->name ?? '-' }}</td>
-                    <td
-                        style="border: 1px solid #000; text-align: center; vertical-align: middle; background-color: #d1e9ff;">
-                        {{ $user->schedules->first()?->office?->name ?? '-' }}</td>
-                </tr>
+                @endforeach
             @endforeach
         @endforeach
     </tbody>

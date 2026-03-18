@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Attendance extends Model
 {
+    protected $appends = ['start_time_format', 'end_time_format', 'is_late_bool', 'lunch_money_label'];
+
     protected $casts = [
         'start_time' => 'datetime',
         'end_time' => 'datetime',
@@ -33,6 +35,26 @@ class Attendance extends Model
         'start_time',
         'end_time',
     ];
+
+    public function getStartTimeFormatAttribute()
+    {
+        return $this->start_time?->format('H:i') ?? '--:--';
+    }
+
+    public function getEndTimeFormatAttribute()
+    {
+        return $this->end_time?->format('H:i') ?? '--:--';
+    }
+
+    public function getIsLateBoolAttribute()
+    {
+        return $this->isLate();
+    }
+
+    public function getLunchMoneyLabelAttribute()
+    {
+        return $this->isLate() ? 'Rp 0 (Terlambat)' : 'Rp 15.000';
+    }
 
     public function user(): BelongsTo
     {

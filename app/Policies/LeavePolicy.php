@@ -15,13 +15,7 @@ class LeavePolicy
      */
     public function viewAny(User $user): bool
     {
-        // Admin & Super Admin bisa lihat semua
-        if ($user->hasRole(['super_admin', 'admin'])) {
-            return true;
-        }
-
-        // Karyawan hanya bisa melihat menu presensi mereka sendiri
-        return $user->hasRole('karyawan');
+        return $user->can('view_any_leave');
     }
 
     /**

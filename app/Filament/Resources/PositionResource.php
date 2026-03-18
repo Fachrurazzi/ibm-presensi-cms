@@ -16,6 +16,7 @@ class PositionResource extends Resource
     protected static ?string $model = Position::class;
     protected static ?string $navigationIcon = 'heroicon-o-briefcase';
     protected static ?string $navigationGroup = 'Manajemen Pengguna';
+    protected static ?int $navigationSort = 2;
 
     public static function getModelLabel(): string
     {

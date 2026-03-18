@@ -24,14 +24,22 @@ class AttendanceTrendChart extends ChartWidget
 
     protected function getData(): array
     {
-        // Mengambil data 7 hari terakhir secara dinamis
-        $data = collect(range(6, 0))->map(function ($daysAgo) {
+        $startDate = now()->subDays(6)->startOfDay();
+        $endDate = now()->endOfDay();
+
+        // Ambil data dalam SATU kali query
+        $attendances = Attendance::whereBetween('created_at', [$startDate, $endDate])->get();
+
+        $data = collect(range(6, 0))->map(function ($daysAgo) use ($attendances) {
             $date = now()->subDays($daysAgo)->toDateString();
+
+            // Filter dari koleksi yang sudah di-load, bukan nembak database lagi
+            $dailyData = $attendances->filter(fn($at) => Carbon::parse($at->created_at)->toDateString() === $date);
 
             return [
                 'label' => now()->subDays($daysAgo)->isoFormat('ddd'),
-                'tepat' => Attendance::whereDate('start_time', $date)->get()->filter(fn($at) => !$at->isLate())->count(),
-                'lambat' => Attendance::whereDate('start_time', $date)->get()->filter(fn($at) => $at->isLate())->count(),
+                'tepat' => $dailyData->filter(fn($at) => !$at->isLate())->count(),
+                'lambat' => $dailyData->filter(fn($at) => $at->isLate())->count(),
             ];
         });
 

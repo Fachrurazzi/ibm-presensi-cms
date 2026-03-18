@@ -11,12 +11,14 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Hash;
+use Filament\Notifications\Notification;
 
 class UserResource extends Resource
 {
     protected static ?string $model = User::class;
     protected static ?string $navigationIcon = 'heroicon-o-users';
     protected static ?string $navigationGroup = 'Manajemen Pengguna';
+    protected static ?int $navigationSort = 1;
 
     public static function getModelLabel(): string
     {
@@ -67,30 +69,55 @@ class UserResource extends Resource
                             ->relationship('roles', 'name')
                             ->preload()
                             ->required(),
+
+                        // --- TAMBAHAN: Tanggal Bergabung ---
+                        Forms\Components\DatePicker::make('join_date')
+                            ->label('Tanggal Bergabung')
+                            ->required()
+                            ->native(false)
+                            ->displayFormat('d M Y')
+                            ->helperText('Digunakan untuk acuan reset cuti tahunan.'),
                     ])->columnSpan(['lg' => 2])->columns(2),
 
-                Forms\Components\Section::make('Keamanan')
-                    ->description('Kelola kata sandi akun.')
-                    ->icon('heroicon-m-key')
+                Forms\Components\Group::make()
                     ->schema([
-                        Forms\Components\TextInput::make('password')
-                            ->label('Kata Sandi Baru')
-                            ->password()
-                            // Wajib diisi hanya saat membuat user baru (create)
-                            ->required(fn(string $context) => $context === 'create')
-                            // Password tidak boleh di-hash jika kosong (saat edit)
-                            ->dehydrateStateUsing(fn($state) => filled($state) ? Hash::make($state) : null)
-                            // Field ini hanya dikirim ke database jika ada isinya
-                            ->dehydrated(fn($state) => filled($state))
-                            ->same('password_confirmation')
-                            ->helperText('Kosongkan jika tidak ingin mengubah kata sandi.'),
+                        Forms\Components\Section::make('Keamanan')
+                            ->description('Kelola kata sandi akun.')
+                            ->icon('heroicon-m-key')
+                            ->schema([
+                                Forms\Components\TextInput::make('password')
+                                    ->label('Kata Sandi Baru')
+                                    ->password()
+                                    ->required(fn(string $context) => $context === 'create')
+                                    ->dehydrateStateUsing(fn($state) => filled($state) ? Hash::make($state) : null)
+                                    ->dehydrated(fn($state) => filled($state))
+                                    ->same('password_confirmation')
+                                    ->helperText('Kosongkan jika tidak ingin mengubah kata sandi.'),
 
-                        Forms\Components\TextInput::make('password_confirmation')
-                            ->label('Konfirmasi Kata Sandi')
-                            ->password()
-                            // Wajib diisi hanya jika password utama diisi
-                            ->required(fn(string $context) => $context === 'create')
-                            ->dehydrated(false),
+                                Forms\Components\TextInput::make('password_confirmation')
+                                    ->label('Konfirmasi Kata Sandi')
+                                    ->password()
+                                    ->required(fn(string $context) => $context === 'create')
+                                    ->dehydrated(false),
+                            ]),
+
+                        // --- TAMBAHAN: Informasi Cuti & Saldo Uang ---
+                        Forms\Components\Section::make('Informasi Cuti')
+                            ->icon('heroicon-m-calendar-days')
+                            ->schema([
+                                Forms\Components\TextInput::make('leave_quota')
+                                    ->label('Sisa Kuota Cuti (Tahun Ini)')
+                                    ->numeric()
+                                    ->default(12)
+                                    ->suffix('Hari'),
+
+                                Forms\Components\TextInput::make('cashable_leave')
+                                    ->label('Saldo Uang Cuti')
+                                    ->numeric()
+                                    ->default(0)
+                                    ->helperText('Sisa cuti tahun sebelumnya yang bisa diuangkan.')
+                                    ->suffix('Hari'),
+                            ]),
                     ])->columnSpan(['lg' => 1]),
             ])->columns(3);
     }
@@ -116,15 +143,26 @@ class UserResource extends Resource
                     ->badge()
                     ->color('gray'),
 
+                // --- TAMBAHAN: Menampilkan Tanggal Masuk Kerja ---
+                Tables\Columns\TextColumn::make('join_date')
+                    ->label('Tgl Masuk')
+                    ->date('d M Y')
+                    ->sortable()
+                    ->color('info'),
+
+                // --- TAMBAHAN: Menampilkan Saldo Uang Cuti di Tabel ---
+                Tables\Columns\TextColumn::make('cashable_leave')
+                    ->label('Saldo Uang')
+                    ->badge()
+                    ->color(fn($state) => $state > 0 ? 'success' : 'gray')
+                    ->suffix(' Hari')
+                    ->sortable(),
+
                 Tables\Columns\TextColumn::make('roles.name')
                     ->label('Peran')
                     ->badge()
-                    ->color('success'),
-
-                Tables\Columns\TextColumn::make('created_at')
-                    ->label('Bergabung')
-                    ->dateTime('d M Y')
-                    ->color('gray'),
+                    ->color('success')
+                    ->toggleable(isToggledHiddenByDefault: true), // Disembunyikan secara default agar tabel tidak terlalu padat
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('position_id')
@@ -132,6 +170,26 @@ class UserResource extends Resource
                     ->relationship('position', 'name'),
             ])
             ->actions([
+                // --- TAMBAHAN: Tombol Cairkan Uang Cuti ---
+                Tables\Actions\Action::make('cairkan_cuti')
+                    ->label('Cairkan')
+                    ->icon('heroicon-m-banknotes')
+                    ->color('success')
+                    ->requiresConfirmation()
+                    ->modalHeading('Konfirmasi Pencairan Cuti')
+                    ->modalDescription(fn(User $record) => "Karyawan ini memiliki saldo {$record->cashable_leave} hari cuti yang belum diuangkan. Lanjutkan pencairan menjadi 0?")
+                    ->modalSubmitActionLabel('Ya, Cairkan & Kosongkan Saldo')
+                    ->visible(fn(User $record) => $record->cashable_leave > 0) // Hanya muncul jika saldo lebih dari 0
+                    ->action(function (User $record) {
+                        $record->update(['cashable_leave' => 0]);
+
+                        Notification::make()
+                            ->title('Pencairan Berhasil')
+                            ->body("Saldo cuti {$record->name} berhasil dicairkan dan dikosongkan.")
+                            ->success()
+                            ->send();
+                    }),
+
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
             ]);

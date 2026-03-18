@@ -10,63 +10,41 @@ class AttendancePolicy
 {
     use HandlesAuthorization;
 
-    /**
-     * Determine whether the user can view any models.
-     */
     public function viewAny(User $user): bool
     {
-        // Semua user (Admin & Karyawan) boleh masuk ke menu, tapi datanya disaring di Resource
-        return $user->hasRole(['super_admin', 'admin', 'karyawan']);
+        // Karyawan butuh ini untuk melihat menu presensi
+        return $user->can('view_any_attendance');
     }
 
-    /**
-     * Determine whether the user can view the model.
-     */
     public function view(User $user, Attendance $attendance): bool
     {
         return $user->can('view_attendance');
     }
 
-    /**
-     * Determine whether the user can create models.
-     */
     public function create(User $user): bool
     {
+        // Karyawan butuh ini untuk melakukan absensi
         return $user->can('create_attendance');
     }
 
-    /**
-     * Determine whether the user can update the model.
-     */
     public function update(User $user, Attendance $attendance): bool
     {
-        // Karyawan tidak boleh mengedit data absen yang sudah masuk
-        return $user->hasRole(['super_admin', 'admin']);
+        return $user->can('update_attendance');
     }
 
-    /**
-     * Determine whether the user can delete the model.
-     */
     public function delete(User $user, Attendance $attendance): bool
     {
-        // Hanya Admin yang bisa menghapus data absen
-        return $user->hasRole(['super_admin', 'admin']);
+        return $user->can('delete_attendance');
     }
 
-    /**
-     * Determine whether the user can bulk delete.
-     */
     public function deleteAny(User $user): bool
     {
         return $user->can('delete_any_attendance');
     }
 
-    /**
-     * Determine whether the user can permanently delete.
-     */
     public function forceDelete(User $user, Attendance $attendance): bool
     {
-        return $user->can('force_delete_attendance');
+        return $user->can('force_attendance');
     }
 
     /**
@@ -74,7 +52,7 @@ class AttendancePolicy
      */
     public function forceDeleteAny(User $user): bool
     {
-        return $user->can('force_delete_any_attendance');
+        return $user->can('force_any_attendance');
     }
 
     /**
@@ -82,7 +60,7 @@ class AttendancePolicy
      */
     public function restore(User $user, Attendance $attendance): bool
     {
-        return $user->can('restore_attendance');
+        return $user->can('restores_attendance');
     }
 
     /**

@@ -52,6 +52,7 @@
         .emp-item:hover {
             border-color: #fbbf24;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+            transform: translateY(-2px);
         }
 
         .badge-status {
@@ -73,32 +74,30 @@
             border-radius: 10px;
         }
 
-        /* Fix Marker Hilang & Pulse Effect */
+        /* Marker & Pulse Effect */
         .custom-div-icon {
             background: transparent !important;
             border: none !important;
         }
 
         .marker-pin {
-            width: 16px !important;
-            height: 16px !important;
+            width: 18px !important;
+            height: 18px !important;
             border-radius: 50% !important;
             border: 3px solid white !important;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
             position: relative !important;
-            display: block !important;
         }
 
         .marker-pulse {
             position: absolute !important;
             top: -3px !important;
             left: -3px !important;
-            width: 16px !important;
-            height: 16px !important;
+            width: 18px !important;
+            height: 18px !important;
             border-radius: 50% !important;
             animation: pulse 2s infinite !important;
             opacity: 0.6 !important;
-            pointer-events: none !important;
         }
 
         @keyframes pulse {
@@ -113,9 +112,31 @@
             }
         }
 
+        /* Modern Popup Styling */
         .leaflet-popup-content-wrapper {
-            border-radius: 12px !important;
-            padding: 5px;
+            border-radius: 16px !important;
+            padding: 0;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        .leaflet-popup-content {
+            margin: 0 !important;
+            width: 220px !important;
+        }
+
+        .popup-header {
+            padding: 12px;
+            color: white;
+            text-align: center;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        .popup-body {
+            padding: 15px;
+            background: white;
+            text-align: center;
+            font-family: 'Plus Jakarta Sans', sans-serif;
         }
     </style>
 
@@ -247,11 +268,11 @@
             if (!map) setupMap();
             markerLayer.clearLayers();
             officeLayers.clearLayers();
-            userMarkers = {}; // Reset
+            userMarkers = {};
 
             let focusPoints = [];
 
-            // Office Radius
+            // 1. Draw Office Radius & Collect Focus Points
             offices.forEach(off => {
                 let lat = parseFloat(off.latitude),
                     lng = parseFloat(off.longitude);
@@ -260,27 +281,33 @@
                         color: '#f59e0b',
                         weight: 1,
                         fillColor: '#f59e0b',
-                        fillOpacity: 0.05,
+                        fillOpacity: 0.08,
                         radius: parseFloat(off.radius) || 100
                     }).addTo(officeLayers);
-                    if (selectedId == off.id) focusPoints.push([lat, lng]);
+
+                    // JIKA "Seluruh Area" dipilih, masukkan semua kantor ke focusPoints
+                    // JIKA satu kantor dipilih, hanya masukkan kantor tersebut
+                    if (!selectedId || selectedId == off.id) {
+                        focusPoints.push([lat, lng]);
+                    }
                 }
             });
 
-            // Employee Markers
+            // 2. Draw Employee Markers
             attendances.forEach(at => {
                 let lat = parseFloat(at.start_latitude),
                     lng = parseFloat(at.start_longitude);
                 if (!isNaN(lat) && !isNaN(lng)) {
                     let color = at.is_wfa ? '#a855f7' : (at.is_late ? '#ef4444' : '#10b981');
+                    let statusText = at.is_late ? 'Terlambat' : 'Hadir';
 
                     const icon = L.divIcon({
                         className: 'custom-div-icon',
                         html: `<div class="marker-pin" style="background-color: ${color};">
                                 <div class="marker-pulse" style="background-color: ${color};"></div>
                                </div>`,
-                        iconSize: [16, 16],
-                        iconAnchor: [8, 8],
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9],
                         popupAnchor: [0, -10]
                     });
 
@@ -288,12 +315,13 @@
                             icon: icon
                         })
                         .bindPopup(`
-                            <div style="text-align:center; padding: 5px; font-family: sans-serif;">
-                                <div style="font-size: 10px; font-weight: 800; color: ${color}; text-transform: uppercase;">
-                                    ${at.is_late ? 'Terlambat' : 'Hadir'}
-                                </div>
-                                <b style="font-size: 13px;">${at.user.name}</b><br>
-                                <small style="color: #64748b;">${at.display_location} • ${at.jam_menit}</small>
+                            <div class="popup-header" style="background: ${color}">
+                                <span style="font-size: 9px; font-weight: 800; text-transform: uppercase;">${statusText}</span>
+                            </div>
+                            <div class="popup-body">
+                                <div style="font-weight: 800; font-size: 14px; color: #1e293b;">${at.user.name}</div>
+                                <div style="font-size: 11px; color: #64748b; margin-top: 4px;">${at.display_location}</div>
+                                <div style="font-size: 10px; font-weight: 700; color: #1e293b; margin-top: 8px; border-top: 1px solid #f1f5f9; padding-top: 8px;">🕒 ${at.jam_menit} WIB</div>
                             </div>
                         `)
                         .addTo(markerLayer);
@@ -303,11 +331,14 @@
                 }
             });
 
+            // 3. Smart Zoom Logic
             if (focusPoints.length > 0) {
                 map.fitBounds(L.latLngBounds(focusPoints), {
-                    padding: [80, 80],
+                    padding: [100, 100],
                     maxZoom: 15
                 });
+            } else {
+                map.setView([-0.5000, 115.0333], 6);
             }
         }
 
@@ -317,6 +348,7 @@
                 const payload = Array.isArray(data) ? data[0] : data;
                 updateMarkers(payload.attendances, payload.offices, payload.selectedId);
             });
+
             updateMarkers(@json($attendances->toArray()), @json($offices->toArray()), @json($selectedOffice));
 
             document.getElementById('empSearch').addEventListener('input', (e) => {
@@ -330,8 +362,10 @@
 
         window.focusUser = (lat, lng, id) => {
             if (!map) return;
-            map.flyTo([lat, lng], 17);
-            if (userMarkers[id]) setTimeout(() => userMarkers[id].openPopup(), 1200);
+            map.flyTo([lat, lng], 17, {
+                duration: 1.5
+            });
+            if (userMarkers[id]) setTimeout(() => userMarkers[id].openPopup(), 1500);
         };
     </script>
 </div>
