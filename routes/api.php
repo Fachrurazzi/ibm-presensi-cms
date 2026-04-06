@@ -1,48 +1,78 @@
-<?php
+    <?php
 
-use App\Http\Controllers\API\AttendanceController;
-use App\Http\Controllers\API\AuthController;
-use App\Http\Controllers\API\LeaveController;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
+    use App\Http\Controllers\API\AttendanceController;
+    use App\Http\Controllers\API\AuthController;
+    use App\Http\Controllers\API\LeaveController;
+    use App\Http\Controllers\API\ProfileController;
+    use Illuminate\Support\Facades\Route;
+    use Illuminate\Support\Facades\Response;
 
-// --- Public Routes ---
-Route::post('/v1/login', [AuthController::class, 'login'])->name('login');
+    /*
+    |--------------------------------------------------------------------------
+    | API Routes - PT INTIBOGA MANDIRI
+    |--------------------------------------------------------------------------
+    */
 
-// --- Protected Routes (Sanctum) ---
-Route::middleware('auth:sanctum')->group(function () {
-
-    // Semua rute di dalam grup ini akan diawali dengan /v1
+    // --- Public Routes ---
     Route::prefix('v1')->group(function () {
-
-        // --- FITUR ABSENSI & KEAMANAN ---
-        Route::get('/today', [AttendanceController::class, 'getAttendanceToday'])->name('get_attendance_today');
-        Route::get('/schedule', [AttendanceController::class, 'getSchedule'])->name('get_schedule');
-        Route::post('/store', [AttendanceController::class, 'store'])->name('tagging_presensi');
-        Route::get('/history/{month}/{year}', [AttendanceController::class, 'getAttendanceByMonthAndYear'])->name('get_attendance_by_month_and_year');
-        Route::get('/image', [AttendanceController::class, 'getImage'])->name('get_image');
-
-        // Rute Auto-Banned (Bisa dipanggil oleh sistem aplikasi user sendiri)
-        Route::post('/banned', [AttendanceController::class, 'banned'])->name('user.auto_banned');
-
-        // --- FITUR CUTI (LEAVES) ---
-        Route::prefix('leaves')->group(function () {
-            Route::get('/', [LeaveController::class, 'index'])->name('leaves.index');
-            Route::post('/', [LeaveController::class, 'store'])->name('leaves.store');
-
-            // Approval Cuti (Hanya Admin)
-            Route::middleware('is_admin')->post('/{id}/status', [LeaveController::class, 'updateStatus'])->name('leaves.update_status');
-        });
-
-        // --- FITUR KHUSUS ADMIN ---
-        Route::middleware('is_admin')->group(function () {
-            // Admin juga bisa mem-banned user tertentu secara manual jika diperlukan
-            Route::post('/admin/user/banned', [AttendanceController::class, 'banned'])->name('admin.user.banned');
-        });
-
-        // Info User
-        Route::get('/user', function (Request $request) {
-            return $request->user();
-        })->name('user.profile');
+        Route::post('/login', [AuthController::class, 'login'])->name('login');
     });
-});
+
+    // --- Protected Routes (Sanctum) ---
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::prefix('v1')->group(function () {
+
+            // --- AUTH & PROFILE ---
+            Route::post('/logout', [AuthController::class, 'logout']);
+            Route::post('/profile/update', [ProfileController::class, 'update']);
+            Route::get('/profile/photo', [ProfileController::class, 'showPhoto']);
+
+            // --- ABSENSI (ATTENDANCE) ---
+            Route::controller(AttendanceController::class)->group(function () {
+                Route::get('/today', 'getAttendanceToday');
+                Route::get('/schedule', 'getSchedule');
+                Route::post('/store', 'store');
+                Route::get('/history/{month}/{year}', 'getAttendanceByMonthAndYear');
+                Route::post('/banned', 'banned');
+            });
+
+            // --- CUTI (LEAVES) ---
+            Route::prefix('leaves')->controller(LeaveController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::middleware('is_admin')->post('/{id}/status', 'updateStatus');
+            });
+        });
+    });
+
+    /**
+     * ROUTE AKSES GAMBAR (LOGIKA SAKTI)
+     * Diletakkan di level 'api/storage/...' agar sesuai dengan AppConfig.STORAGE_URL di Flutter
+     */
+    Route::get('/storage/{path}', function ($path) {
+        // Jalur absolut
+        $fullPath = storage_path('app/public/' . $path);
+
+        // KUNCI: Bersihkan cache status file Linux
+        clearstatcache(true, $fullPath);
+
+        if (!file_exists($fullPath)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'File tidak ditemukan di server fisik',
+                'path_debug' => $fullPath,
+            ], 404);
+        }
+
+        $file = file_get_contents($fullPath);
+        $type = mime_content_type($fullPath);
+
+        if (ob_get_level()) ob_end_clean();
+
+        // REVISI HEADER: Set ke no-cache agar Flutter yang memegang kendali cache
+        return Response::make($file, 200)
+            ->header("Content-Type", $type)
+            ->header("Cache-Control", "no-cache, no-store, must-revalidate")
+            ->header("Pragma", "no-cache")
+            ->header("Expires", "0");
+    })->where('path', '.*');

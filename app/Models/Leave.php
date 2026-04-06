@@ -19,10 +19,9 @@ class Leave extends Model
         'note',
     ];
 
-    // WAJIB: Agar start_date dan end_date menjadi objek Carbon
     protected $casts = [
-        'start_date' => 'date',
-        'end_date' => 'date',
+        'start_date' => 'date:Y-m-d',
+        'end_date' => 'date:Y-m-d',
     ];
 
     public function user(): BelongsTo
