@@ -6,61 +6,151 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class AuthController extends Controller
 {
     /**
-     * Proses Login Karyawan
+     * Helper: Standar Response JSON
      */
-    public function login(Request $request)
+    private function jsonResponse($success, $message, $data = null, $code = 200)
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
-
-        // 1. Cari user & muat relasi position (Penting untuk label Admin/Operator di Flutter)
-        $user = User::with('position')->where('email', $request->email)->first();
-
-        // 2. Validasi User & Password
-        if (!$user || !Hash::check($request->password, $user->password)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Email atau password yang Anda masukkan salah.',
-                'data'    => null,
-            ], 422);
-        }
-
-        // 3. Hapus token lama (opsional, agar login hanya bisa di satu perangkat)
-        $user->tokens()->delete();
-
-        // 4. Generate Token Baru
-        $token = $user->createToken('auth_token')->plainTextToken;
-
         return response()->json([
-            'success' => true,
-            'message' => 'Login berhasil. Selamat datang, ' . $user->name,
-            'data'    => [
-                'access_token' => $token,
-                'token_type'   => 'Bearer',
-                'user'         => $user,
-            ],
-        ]);
+            'success' => $success,
+            'message' => $message,
+            'data'    => $data,
+        ], $code);
     }
 
     /**
-     * Proses Logout (Hapus Token)
+     * Proses Login
+     */
+    public function login(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email'    => 'required|email',
+            'password' => 'required',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->jsonResponse(false, 'Validasi gagal', $validator->errors(), 422);
+        }
+
+        try {
+            // Eager load relasi position agar data jabatan terbawa
+            $user = User::with('position')->where('email', $request->email)->first();
+
+            if (!$user || !Hash::check($request->password, $user->password)) {
+                return $this->jsonResponse(false, 'Email atau password salah.', null, 422);
+            }
+
+            // Hapus token lama agar tidak menumpuk
+            $user->tokens()->delete();
+            $token = $user->createToken('auth_token')->plainTextToken;
+
+            // STRUKTUR DATA: Disamakan dengan ProfileEntity di Flutter
+            $userData = [
+                'access_token' => $token,
+                'token_type'   => 'Bearer',
+                'user'         => [
+                    'id'    => $user->id,
+                    'name'  => $user->name,
+                    'email' => $user->email,
+                    // PENTING: Kirim sebagai Object agar Flutter tidak null
+                    'position' => [
+                        'id'   => $user->position?->id,
+                        'name' => $user->position?->name ?? 'Karyawan IBM',
+                    ],
+                    'image' => $user->image, // Key disamakan dengan model Flutter
+                    'image_url' => $user->image_url,
+                    'is_default_password' => (bool) $user->is_default_password,
+                    'is_face_registered'  => !empty($user->face_model_path),
+                ],
+            ];
+
+            return $this->jsonResponse(true, 'Login berhasil. Selamat datang, ' . $user->name, $userData);
+        } catch (\Exception $e) {
+            return $this->jsonResponse(false, 'Terjadi kesalahan sistem: ' . $e->getMessage(), null, 500);
+        }
+    }
+
+    /**
+     * Update Password (Onboarding)
+     */
+    public function updatePassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->jsonResponse(false, 'Validasi gagal', $validator->errors(), 422);
+        }
+
+        try {
+            $user = Auth::user();
+
+            $user->update([
+                'password' => Hash::make($request->password),
+                'is_default_password' => false,
+            ]);
+
+            return $this->jsonResponse(true, 'Password berhasil diperbarui.');
+        } catch (\Exception $e) {
+            return $this->jsonResponse(false, 'Gagal memperbarui password', null, 500);
+        }
+    }
+
+    /**
+     * Registrasi Wajah
+     */
+    public function registerFace(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'face_model' => 'required',
+            'image'      => 'required|image|max:2048',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->jsonResponse(false, 'Validasi gagal', $validator->errors(), 422);
+        }
+
+        try {
+            $user = Auth::user();
+
+            if ($request->hasFile('image')) {
+                // Hapus foto wajah lama jika ada
+                if ($user->image && Storage::disk('public')->exists($user->image)) {
+                    Storage::disk('public')->delete($user->image);
+                }
+
+                $path = $request->file('image')->store('users/faces', 'public');
+                $user->image = $path;
+            }
+
+            $user->face_model_path = $request->face_model;
+            $user->save();
+
+            return $this->jsonResponse(true, 'Data wajah berhasil didaftarkan.', [
+                'image_url' => $user->image_url
+            ]);
+        } catch (\Exception $e) {
+            return $this->jsonResponse(false, 'Gagal mendaftarkan wajah', null, 500);
+        }
+    }
+
+    /**
+     * Logout
      */
     public function logout(Request $request)
     {
-        // Menghapus token yang sedang digunakan saat ini
-        $request->user()->currentAccessToken()->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Berhasil keluar dari aplikasi.',
-            'data'    => null
-        ]);
+        try {
+            Auth::user()->currentAccessToken()->delete();
+            return $this->jsonResponse(true, 'Berhasil keluar dari aplikasi.');
+        } catch (\Exception $e) {
+            return $this->jsonResponse(false, 'Gagal logout', null, 500);
+        }
     }
 }

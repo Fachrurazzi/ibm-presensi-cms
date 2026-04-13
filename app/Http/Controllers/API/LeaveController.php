@@ -5,8 +5,8 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Leave;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\{Auth, Validator, Log};
+use Carbon\Carbon;
 
 class LeaveController extends Controller
 {
@@ -23,37 +23,53 @@ class LeaveController extends Controller
     }
 
     /**
-     * List Cuti:
-     * - Admin: Melihat semua pengajuan cuti karyawan.
-     * - Karyawan: Hanya melihat riwayat cuti miliknya sendiri.
+     * List Cuti (Riwayat):
+     * - USER: Hanya melihat miliknya sendiri (PENTING!).
+     * - ADMIN: Jika butuh menu khusus approval, biasanya menggunakan endpoint berbeda.
      */
     public function index()
     {
         try {
             $user = Auth::user();
 
-            // Cek apakah user memiliki role admin/super_admin
-            // Sesuaikan dengan logic is_admin kamu
-            if ($user->position_id == 1 || $user->hasRole('super_admin')) {
-                $leaves = Leave::with('user.position')->latest()->get();
-            } else {
-                $leaves = Leave::where('user_id', $user->id)->latest()->get();
-            }
+            // REVISI: Pastikan hanya mengambil data milik user yang login
+            // Kita hapus pengecekan position_id == 1 agar data tidak campur di Dashboard HP
+            $leaves = Leave::with(['user.position'])
+                ->where('user_id', $user->id) 
+                ->latest()
+                ->get();
 
-            return $this->jsonResponse(true, 'Data cuti berhasil dimuat', $leaves);
+            // REFORMAT: Menyamakan struktur JSON dengan yang diharapkan oleh Entity di Flutter
+            $formattedLeaves = $leaves->map(function ($leave) {
+                return [
+                    'id'         => $leave->id,
+                    'user_id'    => $leave->user_id,
+                    // Carbon parse untuk memastikan format ISO8601 yang disukai Flutter
+                    'start_date' => Carbon::parse($leave->start_date)->toIso8601String(),
+                    'end_date'   => Carbon::parse($leave->end_date)->toIso8601String(),
+                    'reason'     => $leave->reason,
+                    'status'     => $leave->status,
+                    'user'       => $leave->user ? [
+                        'name'     => $leave->user->name,
+                        'position' => [
+                            'name' => $leave->user->position?->name ?? 'Karyawan IBM'
+                        ]
+                    ] : null,
+                ];
+            });
+
+            return $this->jsonResponse(true, 'Data cuti berhasil dimuat', $formattedLeaves);
         } catch (\Exception $e) {
+            Log::error("🚨 Error Load Cuti: " . $e->getMessage());
             return $this->jsonResponse(false, 'Gagal mengambil data cuti', null, 500);
         }
     }
 
     /**
-     * Pengajuan Cuti Baru:
-     * - Mencegah tanggal bentrok (double input).
-     * - Memastikan alasan cukup jelas.
+     * Pengajuan Cuti Baru
      */
     public function store(Request $request)
     {
-        // 1. Validasi tetap sama, tapi kita biarkan format date mentah
         $validator = Validator::make($request->all(), [
             'start_date' => 'required|date',
             'end_date'   => 'required|date|after_or_equal:start_date',
@@ -66,13 +82,12 @@ class LeaveController extends Controller
 
         try {
             $userId = Auth::id();
-            
-            // FIX UTAMA: Paksa format ke Y-m-d agar jam 00:00:00 tidak dikonversi ke UTC
-            // Ini akan membuang offset timezone dari Flutter
-            $startDate = \Carbon\Carbon::parse($request->start_date)->format('Y-m-d');
-            $endDate = \Carbon\Carbon::parse($request->end_date)->format('Y-m-d');
 
-            // Cek apakah ada tanggal yang bentrok
+            // Konversi ke format DB Y-m-d
+            $startDate = Carbon::parse($request->start_date)->format('Y-m-d');
+            $endDate = Carbon::parse($request->end_date)->format('Y-m-d');
+
+            // LOGIKA ANTI-BENTROK
             $overlap = Leave::where('user_id', $userId)
                 ->where('status', '!=', 'rejected')
                 ->where(function ($query) use ($startDate, $endDate) {
@@ -89,7 +104,6 @@ class LeaveController extends Controller
                 return $this->jsonResponse(false, 'Anda sudah memiliki pengajuan cuti pada rentang tanggal tersebut.', null, 422);
             }
 
-            // Simpan data murni Y-m-d
             $leave = Leave::create([
                 'user_id'    => $userId,
                 'start_date' => $startDate,
@@ -98,17 +112,15 @@ class LeaveController extends Controller
                 'status'     => 'pending',
             ]);
 
-            return $this->jsonResponse(true, 'Pengajuan cuti berhasil dikirim', $leave->load('user'), 201);
+            return $this->jsonResponse(true, 'Pengajuan cuti berhasil dikirim', $leave->load('user.position'), 201);
         } catch (\Exception $e) {
-            // Log error untuk debug jika masih gagal
-            \Log::error("Error Cuti: " . $e->getMessage());
-            return $this->jsonResponse(false, 'Terjadi kesalahan sistem', null, 500);
+            Log::error("🚨 Error Submit Cuti: " . $e->getMessage());
+            return $this->jsonResponse(false, 'Terjadi kesalahan sistem saat mengirim cuti', null, 500);
         }
     }
 
     /**
-     * Approval Cuti (Hanya Admin):
-     * Mengubah status menjadi 'approved' atau 'rejected'.
+     * Update Status (Khusus Admin melalui Dashboard Web/Admin)
      */
     public function updateStatus(Request $request, $id)
     {
@@ -117,7 +129,7 @@ class LeaveController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return $this->jsonResponse(false, 'Status tidak valid (Gunakan approved/rejected)', $validator->errors(), 422);
+            return $this->jsonResponse(false, 'Gunakan status approved atau rejected', $validator->errors(), 422);
         }
 
         $leave = Leave::find($id);
@@ -125,13 +137,12 @@ class LeaveController extends Controller
             return $this->jsonResponse(false, 'Data cuti tidak ditemukan', null, 404);
         }
 
-        // Opsional: Jika sudah disetujui, cegah untuk diubah kembali kecuali oleh Super Admin
         if ($leave->status !== 'pending') {
-            return $this->jsonResponse(false, 'Data cuti yang sudah diproses tidak dapat diubah kembali.', null, 422);
+            return $this->jsonResponse(false, 'Data cuti ini sudah diproses sebelumnya.', null, 422);
         }
 
         $leave->update(['status' => $request->status]);
 
-        return $this->jsonResponse(true, "Pengajuan cuti berhasil " . ($request->status == 'approved' ? 'disetujui' : 'ditolak'));
+        return $this->jsonResponse(true, "Cuti berhasil " . ($request->status == 'approved' ? 'disetujui' : 'ditolak'));
     }
 }

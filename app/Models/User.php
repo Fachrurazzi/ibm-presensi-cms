@@ -20,15 +20,19 @@ class User extends Authenticatable
         'password',
         'image',
         'position_id',
-        'leave_qouta',
+        'leave_quota',
         'join_date',
-        'cashable_leave'
+        'cashable_leave',
+        'is_default_password',
+        'face_model_path',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
     ];
+
+    protected $appends = ['is_face_registered'];
 
     protected function casts(): array
     {
@@ -75,5 +79,10 @@ class User extends Authenticatable
     public function schedule()
     {
         return $this->hasOne(Schedule::class, 'user_id');
+    }
+
+    public function getIsFaceRegisteredAttribute()
+    {
+        return $this->face_model_path !== null;
     }
 }

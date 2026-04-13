@@ -9,6 +9,9 @@ use Illuminate\Validation\Rules\Password;
 
 class ProfileController extends Controller
 {
+    /**
+     * Helper: Standar Response JSON
+     */
     private function jsonResponse($success, $message, $data = null, $code = 200)
     {
         return response()->json([
@@ -18,6 +21,9 @@ class ProfileController extends Controller
         ], $code);
     }
 
+    /**
+     * Update Profil (Nama, Foto, Password)
+     */
     public function update(Request $request)
     {
         $user = $request->user();
@@ -35,7 +41,7 @@ class ProfileController extends Controller
 
         try {
             $updatedUser = DB::transaction(function () use ($request, $user) {
-                // 1. Logika Password
+                // 1. Logika Ganti Password
                 if ($request->new_password) {
                     if (!Hash::check($request->old_password, $user->password)) {
                         return false;
@@ -43,20 +49,20 @@ class ProfileController extends Controller
                     $user->password = Hash::make($request->new_password);
                 }
 
-                // 2. Logika Nama
+                // 2. Logika Ganti Nama
                 $user->name = $request->name;
 
-                // 3. Logika Foto
+                // 3. Logika Ganti Foto Profil
                 if ($request->hasFile('image')) {
-                    // Hapus foto lama jika ada
+                    // Hapus file lama jika ada
                     if ($user->image && Storage::disk('public')->exists($user->image)) {
                         Storage::disk('public')->delete($user->image);
                     }
 
-                    // Simpan ke storage/app/public/users-avatar
+                    // Simpan file baru ke folder public/users-avatar
                     $path = $request->file('image')->store('users-avatar', 'public');
 
-                    // Pastikan OS Linux (CachyOS) memberikan permission yang benar segera
+                    // Optimasi untuk Linux (CachyOS): Set visibilitas file
                     Storage::disk('public')->setVisibility($path, 'public');
 
                     $user->image = $path;
@@ -64,7 +70,7 @@ class ProfileController extends Controller
 
                 $user->save();
 
-                // Refresh data terbaru agar ID image yang baru terbawa
+                // Refresh dan load relasi position agar data jabatan terbawa
                 $user->refresh();
                 $user->load('position');
 
@@ -75,15 +81,29 @@ class ProfileController extends Controller
                 return $this->jsonResponse(false, 'Password lama tidak sesuai', null, 422);
             }
 
-            // Opsional: Kasih jeda sangat singkat agar filesystem Linux stabil
-            // usleep(100000); // 0.1 detik
+            // REFORMAT RESPONSE: Disamakan dengan AuthController & Flutter Entity
+            $responseData = [
+                'id'       => $updatedUser->id,
+                'name'     => $updatedUser->name,
+                'email'    => $updatedUser->email,
+                'image'    => $updatedUser->image, // Flutter mencari key 'image'
+                'position' => [
+                    'id'   => $updatedUser->position?->id,
+                    'name' => $updatedUser->position?->name ?? 'Karyawan IBM',
+                ],
+                // Status biometrik tetap dikirim agar state di Flutter konsisten
+                'is_face_registered' => !empty($updatedUser->face_model_path),
+            ];
 
-            return $this->jsonResponse(true, 'Profil berhasil diperbarui', $updatedUser);
+            return $this->jsonResponse(true, 'Profil berhasil diperbarui', $responseData);
         } catch (\Exception $e) {
             return $this->jsonResponse(false, 'Terjadi kesalahan: ' . $e->getMessage(), null, 500);
         }
     }
 
+    /**
+     * Mengambil Path Foto Profil
+     */
     public function showPhoto(Request $request)
     {
         $user = $request->user();
@@ -92,12 +112,12 @@ class ProfileController extends Controller
             return $this->jsonResponse(false, 'Foto profil belum diatur', null, 404);
         }
 
-        // Paksa PHP bersihkan cache status file agar tidak salah deteksi file exists
+        // Penting untuk Linux: Bersihkan cache status file
         clearstatcache(true, Storage::disk('public')->path($user->image));
 
         if (!Storage::disk('public')->exists($user->image)) {
-            return $this->jsonResponse(false, 'File fisik tidak ditemukan', [
-                'jalur_dicari' => Storage::disk('public')->path($user->image)
+            return $this->jsonResponse(false, 'File fisik tidak ditemukan di storage', [
+                'path' => $user->image
             ], 404);
         }
 
