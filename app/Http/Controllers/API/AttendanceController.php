@@ -68,17 +68,7 @@ class AttendanceController extends Controller
         $userId = Auth::id();
         $today  = Carbon::today()->toDateString();
 
-        $isOnLeave = Leave::where('user_id', $userId)
-            ->where('status', 'approved')
-            ->whereDate('start_date', '<=', $today)
-            ->whereDate('end_date', '>=', $today)
-            ->exists();
-
-        if ($isOnLeave) {
-            return $this->jsonResponse(false, 'Anda sedang dalam masa cuti.', ['status' => 'on_leave'], 403);
-        }
-
-        // KUNCI: Tambahkan 'user.position' agar Nama & Jabatan ikut dalam satu response
+        // 1. Ambil data Schedule terlebih dahulu untuk mendapatkan data User-nya
         $schedule = Schedule::with(['office', 'shift', 'user.position'])
             ->where('user_id', $userId)
             ->first();
@@ -87,13 +77,23 @@ class AttendanceController extends Controller
             return $this->jsonResponse(false, 'Jadwal belum diatur.', null, 404);
         }
 
-        if ($schedule->is_banned) {
-            return $this->jsonResponse(false, 'Akun ditangguhkan.', ['status' => 'banned'], 403);
+        // 2. Cek status cuti
+        $isOnLeave = Leave::where('user_id', $userId)
+            ->where('status', 'approved')
+            ->whereDate('start_date', '<=', $today)
+            ->whereDate('end_date', '>=', $today)
+            ->exists();
+
+        if ($isOnLeave) {
+            // REVISI KUNCI: Gunakan Status 200 (Success) agar Flutter bisa memparsing data
+            // Dan sertakan object $schedule agar data user (9 hari cuti) ikut terkirim
+            return $this->jsonResponse(true, 'Anda sedang dalam masa cuti.', $schedule);
         }
 
+        // 3. Normal logic untuk merapikan string jam
         if ($schedule->shift) {
-            $schedule->shift->start_time = trim($schedule->shift->start_time);
-            $schedule->shift->end_time = trim($schedule->shift->end_time);
+            $schedule->shift->start_time = trim($schedule->shift->getRawOriginal('start_time'));
+            $schedule->shift->end_time = trim($schedule->shift->getRawOriginal('end_time'));
         }
 
         return $this->jsonResponse(true, 'Berhasil mendapatkan jadwal', $schedule);

@@ -91,6 +91,7 @@ class ProfileController extends Controller
                     'id'   => $updatedUser->position?->id,
                     'name' => $updatedUser->position?->name ?? 'Karyawan IBM',
                 ],
+                'join_date' => $updatedUser->join_date,
                 // Status biometrik tetap dikirim agar state di Flutter konsisten
                 'is_face_registered' => !empty($updatedUser->face_model_path),
             ];
