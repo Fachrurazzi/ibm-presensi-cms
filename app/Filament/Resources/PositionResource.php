@@ -28,6 +28,16 @@ class PositionResource extends Resource
         return 'Jabatan';
     }
 
+    public static function getNavigationBadge(): ?string
+    {
+        return static::getModel()::count();
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'success';
+    }
+
     public static function form(Form $form): Form
     {
         return $form
@@ -40,12 +50,16 @@ class PositionResource extends Resource
                             ->label('Nama Jabatan')
                             ->placeholder('Masukkan nama jabatan (contoh: Manajer IT)')
                             ->required()
-                            ->unique(ignoreRecord: true)
+                            ->unique(ignoreRecord: true, message: 'Jabatan dengan nama ini sudah ada.')
                             ->maxLength(255)
-                            ->autofocus() // Memudahkan input cepat
+                            ->autofocus()
+                            ->validationMessages([
+                                'required' => 'Nama jabatan wajib diisi.',
+                                'unique' => 'Jabatan :input sudah terdaftar.',
+                            ])
                             ->columnSpanFull(),
                     ])
-                    ->columnSpan(['lg' => 2]), // Konsisten dengan lebar section di UserResource
+                    ->columnSpan(['lg' => 2]),
 
                 Forms\Components\Section::make('Statistik')
                     ->description('Informasi tambahan mengenai jabatan ini.')
@@ -59,8 +73,8 @@ class PositionResource extends Resource
                             ->content(fn(?Position $record): string => $record ? $record->updated_at->diffForHumans() : '-'),
                     ])
                     ->columnSpan(['lg' => 1])
-                    ->hidden(fn(?Position $record) => $record === null), // Sembunyikan saat "Create"
-            ])->columns(3); // Layout 3 kolom agar konsisten dengan UserResource
+                    ->hidden(fn(?Position $record) => $record === null),
+            ])->columns(3);
     }
 
     public static function table(Table $table): Table
@@ -76,10 +90,11 @@ class PositionResource extends Resource
 
                 Tables\Columns\TextColumn::make('users_count')
                     ->label('Total Karyawan')
-                    ->counts('users') // Menggunakan eager loading count otomatis
+                    ->counts('users')
                     ->badge()
-                    ->color('info') // Menggunakan warna info agar lebih menarik
-                    ->alignCenter(),
+                    ->color('info')
+                    ->alignCenter()
+                    ->tooltip('Jumlah karyawan yang memiliki jabatan ini'),
 
                 Tables\Columns\TextColumn::make('updated_at')
                     ->label('Terakhir Perbarui')
@@ -88,13 +103,20 @@ class PositionResource extends Resource
                     ->sortable(),
             ])
             ->defaultSort('name', 'asc')
+            ->filters([
+                Tables\Filters\TrashedFilter::make(),
+            ])
             ->actions([
-                Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make(),
+                Tables\Actions\ActionGroup::make([
+                    Tables\Actions\EditAction::make(),
+                    Tables\Actions\DeleteAction::make(),
+                    Tables\Actions\RestoreAction::make(),
+                ]),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make(),
+                    Tables\Actions\RestoreBulkAction::make(),
                 ]),
             ]);
     }

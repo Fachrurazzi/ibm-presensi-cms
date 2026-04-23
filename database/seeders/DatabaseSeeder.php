@@ -1,25 +1,29 @@
 <?php
+// database/seeders/DatabaseSeeder.php
 
 namespace Database\Seeders;
 
-use App\Models\User;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        // Urutan seeder yang benar
+        $this->call([
+            PositionsTableSeeder::class,        // 1. Buat positions dulu
+            OfficesTableSeeder::class,          // 2. Buat offices
+            ShiftsTableSeeder::class,           // 3. Buat shifts
+            UsersTableSeeder::class,            // 4. Buat users (membutuhkan position_id)
+            RolesAndPermissionsSeeder::class,   // 5. Assign roles
         ]);
+
+        // Factory untuk dummy data (opsional, hanya jika dibutuhkan)
+        // Pastikan factory TIDAK membuat positions baru
+        if (app()->environment('local') && false) { // Set false untuk nonaktifkan
+            \App\Models\Attendance::factory(50)->create();
+            \App\Models\Leave::factory(20)->create();
+            \App\Models\AttendancePermission::factory(15)->create();
+        }
     }
 }

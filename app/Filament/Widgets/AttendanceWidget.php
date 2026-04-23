@@ -10,49 +10,114 @@ use Carbon\Carbon;
 
 class AttendanceWidget extends BaseWidget
 {
-    // Agar widget tampil paling atas dan lebar (full width)
     protected static ?int $sort = -2;
     protected int | string | array $columnSpan = 'full';
 
+    public static function canView(): bool
+    {
+        return !auth()->user()->hasRole('super_admin');
+    }
+
+    protected function getGreeting(): string
+    {
+        $hour = Carbon::now()->hour;
+
+        if ($hour < 12) {
+            return 'Selamat Pagi';
+        } elseif ($hour < 15) {
+            return 'Selamat Siang';
+        } elseif ($hour < 18) {
+            return 'Selamat Sore';
+        }
+        return 'Selamat Malam';
+    }
+
     protected function getStats(): array
     {
-        $attendance = Attendance::where('user_id', Auth::id())
-            ->whereDate('created_at', Carbon::today())
-            ->first();
+        $userId = Auth::id();
+
+        // Cache untuk performa
+        $attendance = cache()->remember(
+            'user_attendance_today_' . $userId,
+            300,
+            fn() => Attendance::where('user_id', $userId)
+                ->whereDate('created_at', Carbon::today())
+                ->first()
+        );
+
+        $user = Auth::user();
+        $remainingQuota = $user->leave_quota ?? 0;
+        $cashableLeave = $user->cashable_leave ?? 0;
+
+        $greeting = $this->getGreeting();
 
         // Logika Status
         if (!$attendance) {
             $statusLabel = 'Belum Absen';
-            $btnLabel = 'Klik untuk Masuk (Check-In)';
+            $btnLabel = "{$greeting}, silakan check-in sekarang!";
             $color = 'danger';
+            $icon = 'heroicon-m-x-circle';
         } elseif (!$attendance->end_time) {
             $statusLabel = 'Sudah Masuk';
-            $btnLabel = 'Klik untuk Pulang (Check-Out)';
+            $btnLabel = 'Jangan lupa check-out ya!';
             $color = 'warning';
+            $icon = 'heroicon-m-arrow-right-start-on-rectangle';
         } else {
             $statusLabel = 'Selesai Kerja';
-            $btnLabel = 'Presensi Hari Ini Lengkap';
+            $btnLabel = 'Terima kasih, hari ini selesai!';
             $color = 'success';
+            $icon = 'heroicon-m-check-badge';
         }
 
-        return [
+        // Info terlambat
+        $isLateToday = $attendance && $attendance->isLate();
+        $lateMinutes = $isLateToday ? $attendance->start_time->diffInMinutes($attendance->schedule_start_time) : 0;
+
+        $stats = [
             Stat::make('Status Kehadiran', $statusLabel)
                 ->description($btnLabel)
                 ->descriptionIcon('heroicon-m-map-pin')
                 ->color($color)
+                ->icon($icon)
                 ->extraAttributes([
                     'class' => 'cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all duration-300 rounded-xl',
                     'onclick' => "window.location.href='" . route('presensi') . "'",
                 ]),
 
-            Stat::make('Jam Datang', $attendance?->start_time?->format('H:i') ?? '--:--'),
-            Stat::make('Jam Pulang', $attendance?->end_time?->format('H:i') ?? '--:--'),
-        ];
-    }
+            Stat::make('Jam Datang', $attendance?->start_time?->format('H:i') ?? '--:--')
+                ->icon('heroicon-m-arrow-right-start-on-rectangle')
+                ->color($attendance?->start_time ? 'success' : 'gray'),
 
-    // Hanya tampilkan widget ini untuk Karyawan (Admin tidak perlu tombol absen di dashboardnya)
-    public static function canView(): bool
-    {
-        return !auth()->user()->hasRole('super_admin');
+            Stat::make('Jam Pulang', $attendance?->end_time?->format('H:i') ?? '--:--')
+                ->icon('heroicon-m-arrow-right-end-on-rectangle')
+                ->color($attendance?->end_time ? 'success' : 'gray'),
+        ];
+
+        // Tambahan stat untuk sisa cuti
+        $stats[] = Stat::make('Sisa Cuti', $remainingQuota . ' Hari')
+            ->description('Saldo uang: ' . $cashableLeave . ' hari')
+            ->descriptionIcon('heroicon-m-currency-dollar')
+            ->color('info')
+            ->icon('heroicon-m-calendar');
+
+        // Jika terlambat, tampilkan peringatan
+        if ($isLateToday) {
+            $stats[] = Stat::make('Perhatian', 'Terlambat ' . $lateMinutes . ' menit')
+                ->description('Mohon lebih disiplin')
+                ->color('danger')
+                ->icon('heroicon-m-exclamation-triangle');
+        }
+
+        // Link ke riwayat
+        $stats[] = Stat::make('Riwayat Absensi', 'Lihat Semua')
+            ->description('Klik untuk melihat riwayat lengkap')
+            ->icon('heroicon-m-document-text')
+            ->color('gray')
+            ->extraAttributes([
+                'class' => 'cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all duration-300 rounded-xl',
+                'onclick' => "window.location.href='" . route('filament.admin.resources.attendances.index') . "'",
+            ]);
+
+        return $stats;
     }
 }

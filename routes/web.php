@@ -5,6 +5,41 @@
     use Illuminate\Support\Facades\Route;
     use Maatwebsite\Excel\Facades\Excel;
     use Illuminate\Http\Request;
+    use App\Models\Attendance;
+    use Illuminate\Support\Facades\DB;
+
+    Route::get('/debug-att', function () {
+        if (!auth()->check()) {
+            return 'Silakan login dulu sebagai admin';
+        }
+
+        $user = auth()->user();
+        $role = $user->roles->pluck('name')->first();
+
+        $query = Attendance::with(['user', 'schedule.office']);
+
+        // Simulasi filter di resource
+        if (!in_array($role, ['super_admin', 'admin'])) {
+            $query->where('user_id', $user->id);
+        }
+
+        $attendances = $query->get();
+
+        return [
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+            'user_role' => $role,
+            'is_admin' => in_array($role, ['super_admin', 'admin']),
+            'total_attendance' => $attendances->count(),
+            'attendance_data' => $attendances->map(fn($a) => [
+                'id' => $a->id,
+                'user_name' => $a->user?->name,
+                'office_name' => $a->schedule?->office?->name,
+                'start_time' => $a->start_time?->format('Y-m-d H:i'),
+                'schedule_id' => $a->schedule_id,
+            ])
+        ];
+    })->middleware('auth');
 
     Route::middleware('auth')->group(function () {
         // Halaman presensi bisa diakses semua karyawan yang login

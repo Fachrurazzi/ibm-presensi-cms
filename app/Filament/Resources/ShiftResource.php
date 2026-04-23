@@ -9,12 +9,14 @@ use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class ShiftResource extends Resource
 {
     protected static ?string $model = Shift::class;
     protected static ?string $navigationIcon = 'heroicon-o-clock';
     protected static ?string $navigationGroup = 'Master Data';
+    protected static ?int $navigationSort = 4;
 
     public static function getModelLabel(): string
     {
@@ -24,6 +26,16 @@ class ShiftResource extends Resource
     public static function getPluralModelLabel(): string
     {
         return 'Jadwal Shift';
+    }
+
+    public static function getNavigationBadge(): ?string
+    {
+        return static::getModel()::count();
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'warning';
     }
 
     public static function form(Form $form): Form
@@ -39,6 +51,7 @@ class ShiftResource extends Resource
                             ->placeholder('Contoh: Shift Pagi / Shift Malam')
                             ->required()
                             ->maxLength(255)
+                            ->unique(ignoreRecord: true)
                             ->columnSpanFull(),
 
                         Forms\Components\TimePicker::make('start_time')
@@ -53,7 +66,20 @@ class ShiftResource extends Resource
                             ->required()
                             ->seconds(false)
                             ->displayFormat('H:i')
-                            ->suffixIcon('heroicon-m-stop-circle'),
+                            ->suffixIcon('heroicon-m-stop-circle')
+                            ->afterStateUpdated(function ($state, Forms\Set $set, Forms\Get $get) {
+                                $start = $get('start_time');
+                                $end = $state;
+
+                                if ($start && $end && $start >= $end) {
+                                    $set('end_time', null);
+                                    \Filament\Notifications\Notification::make()
+                                        ->danger()
+                                        ->title('Invalid Shift')
+                                        ->body('Jam selesai harus lebih besar dari jam mulai.')
+                                        ->send();
+                                }
+                            }),
                     ])->columnSpan(['lg' => 2])->columns(2),
 
                 Forms\Components\Section::make('Informasi Tambahan')
@@ -74,6 +100,7 @@ class ShiftResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->defaultSort('start_time', 'asc')
             ->columns([
                 Tables\Columns\TextColumn::make('name')
                     ->label('Nama Shift')
@@ -87,27 +114,59 @@ class ShiftResource extends Resource
                     ->dateTime('H:i')
                     ->badge()
                     ->color('info')
-                    ->icon('heroicon-m-play'),
+                    ->icon('heroicon-m-play')
+                    ->tooltip('Jam mulai kerja'),
 
                 Tables\Columns\TextColumn::make('end_time')
                     ->label('Selesai')
                     ->dateTime('H:i')
                     ->badge()
                     ->color('warning')
-                    ->icon('heroicon-m-stop'),
+                    ->icon('heroicon-m-stop')
+                    ->tooltip('Jam selesai kerja'),
 
-                // Menampilkan jumlah karyawan yang menggunakan shift ini (asumsi ada relasi)
                 Tables\Columns\TextColumn::make('schedules_count')
                     ->label('Karyawan')
                     ->counts('schedules')
                     ->badge()
                     ->color('gray')
-                    ->alignCenter(),
+                    ->alignCenter()
+                    ->tooltip('Jumlah karyawan dengan shift ini'),
             ])
-            ->defaultSort('start_time', 'asc')
+            ->filters([
+                Tables\Filters\SelectFilter::make('shift_type')
+                    ->label('Tipe Shift')
+                    ->options([
+                        'regular' => 'Shift Reguler (start < end)',
+                        'overnight' => 'Shift Overnight (start > end)',
+                    ])
+                    ->query(function (Builder $query, array $data) {
+                        if (!$data['value']) return $query;
+
+                        return match ($data['value']) {
+                            'regular' => $query->whereRaw('start_time < end_time'),
+                            'overnight' => $query->whereRaw('start_time > end_time'),
+                            default => $query,
+                        };
+                    }),
+            ])
             ->actions([
+                Tables\Actions\Action::make('duplicate')
+                    ->label('Duplikat')
+                    ->icon('heroicon-m-document-duplicate')
+                    ->color('gray')
+                    ->action(function (Shift $record) {
+                        $newShift = $record->replicate();
+                        $newShift->name = $record->name . ' (Salinan)';
+                        $newShift->save();
+
+                        \Filament\Notifications\Notification::make()
+                            ->title('Shift Berhasil Diduplikat')
+                            ->success()
+                            ->send();
+                    }),
                 Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make()
+                Tables\Actions\DeleteAction::make(),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([

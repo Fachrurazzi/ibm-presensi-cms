@@ -2,26 +2,41 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\Attendance;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Auth;
 
 class Maps extends Page
 {
-    // Mengganti icon agar sesuai dengan desain sidebar yang Anda inginkan
     protected static ?string $navigationIcon = 'heroicon-o-map-pin';
+    protected static ?string $navigationGroup = 'Manajemen Absensi';
+    protected static ?string $navigationLabel = 'Monitoring Lokasi';
+    protected static ?string $title = 'Monitoring Lokasi';
+    protected static ?int $navigationSort = 6;
 
     protected static string $view = 'filament.pages.maps';
 
-    protected static ?string $title = 'Monitoring Lokasi'; // Nama di breadcrumb lebih keren
-
     public static function shouldRegisterNavigation(): bool
     {
-        return auth()->user()->can('page_Maps');
+        return auth()->user()->hasRole(['super_admin', 'admin']);
+    }
+
+    public static function getNavigationBadge(): ?string
+    {
+        $count = Attendance::whereDate('created_at', now())
+            ->whereNotNull('start_latitude')
+            ->count();
+        
+        return $count > 0 ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'success';
     }
 
     public function mount(): void
     {
-        // Tambahan keamanan: Tendang jika coba akses manual via URL
-        abort_unless(auth()->user()->can('page_Maps'), 403);
+        abort_unless(auth()->user()->hasRole(['super_admin', 'admin']), 403);
     }
 }

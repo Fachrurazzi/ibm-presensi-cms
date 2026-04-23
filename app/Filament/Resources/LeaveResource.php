@@ -23,9 +23,22 @@ class LeaveResource extends Resource
     {
         return 'Cuti/Izin';
     }
+
     public static function getPluralModelLabel(): string
     {
         return 'Data Cuti/Izin';
+    }
+
+    public static function getNavigationBadge(): ?string
+    {
+        $count = static::getModel()::where('status', 'PENDING')->count();
+        return $count > 0 ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        $count = static::getModel()::where('status', 'PENDING')->count();
+        return $count > 0 ? 'warning' : null;
     }
 
     public static function form(Form $form): Form
@@ -37,7 +50,6 @@ class LeaveResource extends Resource
                         Forms\Components\Section::make('Detail Pengajuan')
                             ->icon('heroicon-m-clipboard-document-list')
                             ->schema([
-                                // User Selection: Hanya muncul untuk Admin
                                 Forms\Components\Select::make('user_id')
                                     ->label('Karyawan')
                                     ->relationship('user', 'name')
@@ -46,15 +58,30 @@ class LeaveResource extends Resource
                                     ->disabled(!auth()->user()->hasRole(['super_admin', 'admin']))
                                     ->columnSpanFull(),
 
+                                Forms\Components\Select::make('category')
+                                    ->label('Jenis Cuti')
+                                    ->options([
+                                        'annual' => 'Cuti Tahunan',
+                                        'sick' => 'Cuti Sakit',
+                                        'emergency' => 'Cuti Darurat',
+                                        'maternity' => 'Cuti Melahirkan',
+                                        'important' => 'Cuti Penting',
+                                    ])
+                                    ->default('annual')
+                                    ->required()
+                                    ->native(false),
+
                                 Forms\Components\DatePicker::make('start_date')
                                     ->label('Tanggal Mulai')
                                     ->required()
-                                    ->native(false),
+                                    ->native(false)
+                                    ->displayFormat('d M Y'),
 
                                 Forms\Components\DatePicker::make('end_date')
                                     ->label('Tanggal Selesai')
                                     ->required()
                                     ->native(false)
+                                    ->displayFormat('d M Y')
                                     ->afterOrEqual('start_date'),
 
                                 Forms\Components\Textarea::make('reason')
@@ -72,11 +99,11 @@ class LeaveResource extends Resource
                             ->schema([
                                 Forms\Components\Select::make('status')
                                     ->options([
-                                        'pending' => 'Menunggu',
-                                        'approved' => 'Disetujui',
-                                        'rejected' => 'Ditolak',
+                                        'PENDING' => 'Menunggu',
+                                        'APPROVED' => 'Disetujui',
+                                        'REJECTED' => 'Ditolak',
                                     ])
-                                    ->default('pending')
+                                    ->default('PENDING')
                                     ->required()
                                     ->native(false)
                                     ->disabled(!auth()->user()->hasRole(['super_admin', 'admin'])),
@@ -95,14 +122,13 @@ class LeaveResource extends Resource
     {
         return $table
             ->modifyQueryUsing(function (Builder $query) {
-                // Eager Loading user & position
                 $query->with(['user.position']);
 
-                // Jika bukan admin, hanya lihat punya sendiri
                 if (!auth()->user()->hasRole(['super_admin', 'admin'])) {
                     $query->where('user_id', auth()->id());
                 }
             })
+            ->defaultSort('created_at', 'desc')
             ->columns([
                 Tables\Columns\TextColumn::make('user.name')
                     ->label('Karyawan')
@@ -111,54 +137,125 @@ class LeaveResource extends Resource
                     ->weight('bold')
                     ->description(fn(Leave $record) => $record->user->position?->name ?? 'Staff'),
 
+                Tables\Columns\TextColumn::make('category_label')
+                    ->label('Jenis')
+                    ->badge()
+                    ->color('gray'),
+
                 Tables\Columns\TextColumn::make('start_date')
                     ->label('Periode Cuti')
                     ->date('d M Y')
-                    ->description(fn(Leave $record) => "Sampai " . $record->end_date->format('d M Y'))
+                    ->description(fn(Leave $record) => "sd " . $record->end_date->format('d M Y'))
                     ->color('info')
                     ->icon('heroicon-m-calendar-days'),
 
                 Tables\Columns\TextColumn::make('duration')
                     ->label('Durasi')
-                    ->getStateUsing(fn(Leave $record) => $record->start_date->diffInDays($record->end_date) + 1 . ' Hari')
+                    ->getStateUsing(fn(Leave $record) => $record->duration . ' Hari')
                     ->badge()
                     ->color('gray'),
 
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->color(fn(string $state): string => match ($state) {
-                        'approved' => 'success',
-                        'pending' => 'warning',
-                        'rejected' => 'danger',
+                        'APPROVED' => 'success',
+                        'PENDING' => 'warning',
+                        'REJECTED' => 'danger',
                         default => 'gray',
                     })
-                    ->formatStateUsing(fn(string $state): string => ucfirst($state))
+                    ->formatStateUsing(fn(string $state): string => match ($state) {
+                        'APPROVED' => 'Disetujui',
+                        'PENDING' => 'Menunggu',
+                        'REJECTED' => 'Ditolak',
+                        default => $state,
+                    })
                     ->description(fn(Leave $record) => $record->note),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
                     ->options([
-                        'pending' => 'Menunggu',
-                        'approved' => 'Disetujui',
-                        'rejected' => 'Ditolak',
+                        'PENDING' => 'Menunggu',
+                        'APPROVED' => 'Disetujui',
+                        'REJECTED' => 'Ditolak',
+                    ]),
+                Tables\Filters\SelectFilter::make('category')
+                    ->label('Jenis Cuti')
+                    ->options([
+                        'annual' => 'Cuti Tahunan',
+                        'sick' => 'Cuti Sakit',
+                        'emergency' => 'Cuti Darurat',
+                        'maternity' => 'Cuti Melahirkan',
+                        'important' => 'Cuti Penting',
                     ]),
             ])
             ->actions([
+                Tables\Actions\Action::make('approve')
+                    ->label('Setujui')
+                    ->icon('heroicon-m-check')
+                    ->color('success')
+                    ->visible(
+                        fn(Leave $record) =>
+                        $record->status === 'PENDING' &&
+                            auth()->user()->hasRole(['super_admin', 'admin'])
+                    )
+                    ->action(function (Leave $record) {
+                        $record->update(['status' => 'APPROVED']);
+
+                        \Filament\Notifications\Notification::make()
+                            ->success()
+                            ->title('Cuti Disetujui')
+                            ->send();
+                    }),
+
+                Tables\Actions\Action::make('reject')
+                    ->label('Tolak')
+                    ->icon('heroicon-m-x-mark')
+                    ->color('danger')
+                    ->visible(
+                        fn(Leave $record) =>
+                        $record->status === 'PENDING' &&
+                            auth()->user()->hasRole(['super_admin', 'admin'])
+                    )
+                    ->requiresConfirmation()
+                    ->form([
+                        Forms\Components\Textarea::make('note')
+                            ->label('Alasan Penolakan')
+                            ->required(),
+                    ])
+                    ->action(function (Leave $record, array $data) {
+                        $record->update([
+                            'status' => 'REJECTED',
+                            'note' => $data['note'],
+                        ]);
+
+                        \Filament\Notifications\Notification::make()
+                            ->danger()
+                            ->title('Cuti Ditolak')
+                            ->send();
+                    }),
+
+                Tables\Actions\Action::make('cancel')
+                    ->label('Batalkan')
+                    ->icon('heroicon-m-x-circle')
+                    ->color('gray')
+                    ->visible(
+                        fn(Leave $record) =>
+                        $record->status === 'PENDING' &&
+                            $record->user_id === auth()->id()
+                    )
+                    ->requiresConfirmation()
+                    ->action(function (Leave $record) {
+                        $record->delete();
+
+                        \Filament\Notifications\Notification::make()
+                            ->warning()
+                            ->title('Pengajuan Dibatalkan')
+                            ->send();
+                    }),
+
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
             ]);
-    }
-
-    public static function getNavigationBadge(): ?string
-    {
-        $query = static::getModel()::where('status', 'pending');
-
-        if (!auth()->user()->hasRole(['super_admin', 'admin'])) {
-            $query->where('user_id', auth()->id());
-        }
-
-        $count = $query->count();
-        return $count > 0 ? (string) $count : null;
     }
 
     public static function getPages(): array

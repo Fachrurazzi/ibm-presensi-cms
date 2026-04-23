@@ -28,23 +28,48 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+
+            // Branding
+            ->brandName('PT Intiboga Mandiri')
+            ->brandLogo(asset('images/logo-ibm.png'))
+            ->brandLogoHeight('3rem')
+            ->favicon(asset('images/favicon.ico'))
+
+            // Theme & Colors
             ->colors([
                 'primary' => Color::Amber,
+                'danger' => Color::Rose,
+                'success' => Color::Emerald,
+                'warning' => Color::Orange,
+                'info' => Color::Sky,
             ])
-            // Menemukan Resource, Page, dan Widget kustom secara otomatis
+            ->darkMode(true)
+            ->font('Plus Jakarta Sans')
+
+            // Layout
+            ->maxContentWidth('full')
+            ->sidebarCollapsibleOnDesktop()
+
+            // Features
+            ->databaseNotifications()
+            ->databaseNotificationsPolling('30s')
+            ->profile(isSimple: false)
+            ->spa()
+
+            // Discover Resources, Pages, Widgets
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
+            ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
+
+            // Pages
             ->pages([
                 Pages\Dashboard::class,
             ])
-            ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
 
-            // BAGIAN PERUBAHAN: Kosongkan array ini untuk menghapus widget bawaan (Welcome & Info)
-            ->widgets([
-                // Widgets\AccountWidget::class, // Hapus komentar jika ingin info login tetap ada
-                // Widgets\FilamentInfoWidget::class, // Sudah dihapus agar dashboard bersih
-            ])
+            // Widgets - Kosongkan untuk dashboard bersih
+            ->widgets([])
 
+            // Middleware
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -56,11 +81,25 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
+
+            // Plugins
             ->plugins([
                 FilamentShieldPlugin::make(),
             ])
+
+            // Auth Middleware
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+            ])
+
+            // Render Hooks
+            ->renderHook(
+                'panels::head.end',
+                fn(): string => '
+                    <link rel="preconnect" href="https://fonts.googleapis.com">
+                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+                '
+            );
     }
 }

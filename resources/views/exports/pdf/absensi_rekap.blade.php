@@ -16,7 +16,6 @@
             padding: 0;
         }
 
-        /* Kunci agar ganti area = ganti halaman */
         .page-break {
             page-break-after: always;
         }
@@ -34,11 +33,9 @@
         th,
         td {
             border: 0.1pt solid #000;
-            padding: 1px 0;
+            padding: 2px 2px;
             text-align: center;
             vertical-align: middle;
-            overflow: hidden;
-            white-space: nowrap;
         }
 
         th {
@@ -59,22 +56,23 @@
         }
 
         .col-jabatan {
-            width: 12%;
+            width: 10%;
             text-align: left;
             padding-left: 3px;
         }
 
         .col-time {
             font-size: 5px;
+            width: 3%;
         }
 
         .area-header {
             background-color: #e3f2fd;
             text-align: left;
             font-weight: bold;
-            font-size: 11px;
-            padding: 5px 10px;
-            border-bottom: 2pt solid #000;
+            font-size: 9px;
+            padding: 4px 8px;
+            border-bottom: 1pt solid #000;
         }
 
         h2,
@@ -83,21 +81,59 @@
             text-transform: uppercase;
             margin: 2px 0;
         }
+
+        h2 {
+            font-size: 12px;
+        }
+
+        p {
+            font-size: 8px;
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 5px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 5px;
+            color: #999;
+        }
+
+        .late {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+
+        .ontime {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .absent {
+            background-color: #f5f5f5;
+            color: #9e9e9e;
+        }
     </style>
 </head>
 
 <body>
-
     @php
-        // Grouping data di level View berdasarkan nama Office
         $groupedByOffice = $users->groupBy(fn($u) => $u->schedules->first()?->office?->name ?? 'TANPA KANTOR');
+        $globalTotalHadir = 0;
+        $globalTotalTerlambat = 0;
     @endphp
 
     @foreach ($groupedByOffice as $officeName => $officeGroup)
+        @php
+            $totalHadir = 0;
+            $totalTerlambat = 0;
+        @endphp
+
         <div class="page-break">
             <h2>{{ $title }}</h2>
-            <p>AREA: {{ strtoupper($officeName) }} | PERIODE: {{ $dates[0]->format('d M Y') }} -
-                {{ end($dates)->format('d M Y') }}</p>
+            <p>AREA: {{ strtoupper($officeName) }} | PERIODE: {{ Carbon\Carbon::parse($startDate)->format('d M Y') }} -
+                {{ Carbon\Carbon::parse($endDate)->format('d M Y') }}</p>
 
             <table>
                 <thead>
@@ -117,14 +153,16 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {{-- Judul Sub-Area dalam tabel --}}
                     <tr>
                         <td colspan="{{ count($dates) * 2 + 3 }}" class="area-header">
-                            LOKASI / DEPO: {{ strtoupper($officeName) }}
+                            📍 LOKASI / DEPO: {{ strtoupper($officeName) }}
                         </td>
                     </tr>
 
                     @foreach ($officeGroup as $index => $user)
+                        @php
+                            $userLateCount = 0;
+                        @endphp
                         <tr>
                             <td class="col-no">{{ $loop->iteration }}</td>
                             <td class="col-name">{{ Str::limit($user->name, 35) }}</td>
@@ -132,19 +170,58 @@
                             @foreach ($dates as $date)
                                 @php
                                     $att = $user->attendances->first(fn($a) => $a->created_at->isSameDay($date));
+                                    $isLate = $att && $att->isLate();
+                                    $hasPermission =
+                                        $att && $att->permission && $att->permission->status === 'APPROVED';
+
+                                    if ($isLate && !$hasPermission) {
+                                        $userLateCount++;
+                                    }
                                 @endphp
-                                <td class="col-time">{{ $att?->start_time?->format('H:i') ?? '-' }}</td>
-                                <td class="col-time">{{ $att?->end_time?->format('H:i') ?? '-' }}</td>
+                                <td
+                                    class="col-time {{ $isLate && !$hasPermission ? 'late' : ($att ? 'ontime' : 'absent') }}">
+                                    @if ($hasPermission)
+                                        📋
+                                    @else
+                                        {{ $att?->start_time?->format('H:i') ?? '-' }}
+                                    @endif
+                                </td>
+                                <td class="col-time {{ $att ? 'ontime' : 'absent' }}">
+                                    {{ $att?->end_time?->format('H:i') ?? '-' }}
+                                </td>
                             @endforeach
 
                             <td class="col-jabatan">{{ Str::limit($user->position->name ?? '-', 20) }}</td>
                         </tr>
+                        @php
+                            $totalHadir += $user->attendances->count();
+                            $totalTerlambat += $userLateCount;
+                        @endphp
                     @endforeach
+
+                    <tr>
+                        <td colspan="{{ count($dates) * 2 + 2 }}"
+                            style="text-align: right; font-weight: bold; background-color: #f2f2f2;">
+                            TOTAL HADIR:
+                        </td>
+                        <td colspan="2" style="font-weight: bold; background-color: #f2f2f2;">
+                            {{ $totalHadir }} Hadir ({{ $totalTerlambat }} Terlambat)
+                        </td>
+                    </tr>
                 </tbody>
             </table>
         </div>
+
+        @php
+            $globalTotalHadir += $totalHadir;
+            $globalTotalTerlambat += $totalTerlambat;
+        @endphp
     @endforeach
 
+    <div class="footer">
+        Dicetak pada: {{ now()->format('d/m/Y H:i:s') }} | Generated by: {{ auth()->user()->name }} | Total Karyawan:
+        {{ $users->count() }} | Total Hadir: {{ $globalTotalHadir }} | Total Terlambat: {{ $globalTotalTerlambat }}
+    </div>
 </body>
 
 </html>

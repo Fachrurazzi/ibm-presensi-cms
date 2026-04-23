@@ -25,17 +25,11 @@ class LaporanAbsensiResource extends Resource
     protected static ?string $navigationIcon = 'heroicon-o-clipboard-document-check';
     protected static ?string $navigationLabel = 'Rekap Absensi';
     protected static ?string $pluralModelLabel = 'Laporan Rekap Absensi';
-
-    // Mengatur urutan agar rapi di sidebar
     protected static ?int $navigationSort = 1;
 
-    /**
-     * Mencegah duplikasi Roles/Permissions di Filament Shield.
-     * Kita hanya butuh izin 'view' dan 'view_any' untuk rekap laporan.
-     */
     public static function getPermissionPrefixes(): array
     {
-        return [];
+        return ['view', 'view_any'];
     }
 
     public static function canCreate(): bool
@@ -43,7 +37,6 @@ class LaporanAbsensiResource extends Resource
         return false;
     }
 
-    // Mengatur akses berdasarkan Role
     public static function canAccess(): bool
     {
         return auth()->user()->hasRole(['super_admin', 'admin']);
@@ -52,7 +45,7 @@ class LaporanAbsensiResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn(Builder $query) => $query->latest())
+            ->modifyQueryUsing(fn(Builder $query) => $query->latest()->with(['user', 'user.position', 'user.schedules.office']))
             ->columns([
                 Tables\Columns\TextColumn::make('created_at')
                     ->label('Tanggal')
@@ -63,6 +56,10 @@ class LaporanAbsensiResource extends Resource
                     ->searchable()
                     ->sortable()
                     ->weight('bold'),
+                Tables\Columns\TextColumn::make('user.position.name')
+                    ->label('Jabatan')
+                    ->badge()
+                    ->color('gray'),
                 Tables\Columns\TextColumn::make('start_time')
                     ->label('Masuk')
                     ->time('H:i')
@@ -78,87 +75,138 @@ class LaporanAbsensiResource extends Resource
                     ->getStateUsing(fn($record) => $record->isLate())
                     ->trueColor('danger')
                     ->falseColor('success'),
+                Tables\Columns\TextColumn::make('schedule.office.name')
+                    ->label('Area')
+                    ->badge()
+                    ->color('info')
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                // Filter Periode Tanggal
                 Filter::make('periode')
                     ->form([
-                        DatePicker::make('dari')->label('Mulai Tanggal'),
-                        DatePicker::make('sampai')->label('Sampai Tanggal'),
+                        DatePicker::make('dari')
+                            ->label('Mulai Tanggal')
+                            ->default(now()->startOfMonth()),
+                        DatePicker::make('sampai')
+                            ->label('Sampai Tanggal')
+                            ->default(now()->endOfMonth()),
                     ])
                     ->query(
-                        fn(Builder $query, array $data) => $query
-                            ->when($data['dari'], fn($q, $date) => $q->whereDate('created_at', '>=', $date))
+                        fn(Builder $query, array $data) =>
+                        $query->when($data['dari'], fn($q, $date) => $q->whereDate('created_at', '>=', $date))
                             ->when($data['sampai'], fn($q, $date) => $q->whereDate('created_at', '<=', $date))
-                    ),
-                // Filter Multiple Cabang/Area
+                    )
+                    ->columns(2),
+
                 SelectFilter::make('office_id')
                     ->label('Pilih Area/Depo')
                     ->multiple()
                     ->options(fn() => Office::pluck('name', 'id'))
                     ->query(
-                        fn(Builder $query, array $data) => $query
-                            ->when($data['values'], function ($q, $ids) {
-                                return $q->whereHas('user.schedules', fn($sq) => $sq->whereIn('office_id', $ids));
-                            })
+                        fn(Builder $query, array $data) =>
+                        $query->when(
+                            $data['values'],
+                            fn($q, $ids) =>
+                            $q->whereHas('user.schedules', fn($sq) => $sq->whereIn('office_id', $ids))
+                        )
+                    ),
+
+                SelectFilter::make('position_id')
+                    ->label('Jabatan')
+                    ->multiple()
+                    ->options(fn() => Position::pluck('name', 'id'))
+                    ->query(
+                        fn(Builder $query, array $data) =>
+                        $query->when(
+                            $data['values'],
+                            fn($q, $ids) =>
+                            $q->whereHas('user.position', fn($sq) => $sq->whereIn('id', $ids))
+                        )
+                    ),
+
+                SelectFilter::make('status')
+                    ->label('Status Kehadiran')
+                    ->options([
+                        'hadir' => 'Hadir',
+                        'terlambat' => 'Terlambat',
+                        'tidak_hadir' => 'Tidak Hadir',
+                    ])
+                    ->query(
+                        fn(Builder $query, array $data) =>
+                        $query->when($data['value'] === 'hadir', fn($q) => $q->whereNotNull('start_time'))
+                            ->when($data['value'] === 'terlambat', fn($q) => $q->whereRaw('TIME(start_time) > TIME(schedule_start_time)'))
+                            ->when($data['value'] === 'tidak_hadir', fn($q) => $q->whereNull('start_time'))
                     ),
             ])
             ->headerActions([
                 Tables\Actions\Action::make('export_pdf')
-                    ->label('Export PDF Area Terpilih')
+                    ->label('Export PDF')
                     ->color('danger')
-                    ->icon('heroicon-o-arrow-down-tray')
+                    ->icon('heroicon-o-document-arrow-down')
+                    ->requiresConfirmation()
+                    ->modalHeading('Export PDF Rekap Absensi')
+                    ->modalDescription('Data akan diexport berdasarkan filter yang dipilih.')
                     ->action(function ($livewire) {
-                        // 1. Ambil Parameter Tanggal dari Filter
+                        // Ambil Parameter Tanggal
                         $startDate = $livewire->tableFilters['periode']['dari'] ?? now()->startOfMonth()->format('Y-m-d');
                         $endDate = $livewire->tableFilters['periode']['sampai'] ?? now()->endOfMonth()->format('Y-m-d');
 
-                        // 2. Ambil Nama Area Terpilih untuk Nama File
+                        // Ambil Nama Area Terpilih
                         $officeIds = $livewire->tableFilters['office_id']['values'] ?? [];
                         $officeNames = Office::whereIn('id', $officeIds)->pluck('name')->toArray();
+                        $positionIds = $livewire->tableFilters['position_id']['values'] ?? [];
+                        $statusFilter = $livewire->tableFilters['status']['value'] ?? null;
 
-                        // Nama file dinamis: maksimal 3 area untuk menjaga panjang karakter
+                        // Nama file dinamis
                         $areaString = count($officeNames) > 0
                             ? implode('_', array_slice($officeNames, 0, 3)) . (count($officeNames) > 3 ? '_dst' : '')
                             : 'Semua_Area';
 
-                        // 3. Format Tanggal untuk Nama File
                         $formattedStart = Carbon::parse($startDate)->format('dM');
                         $formattedEnd = Carbon::parse($endDate)->format('dM_Y');
                         $dateRange = "{$formattedStart}_sd_{$formattedEnd}";
 
-                        // 4. Query Data User (Unique) & Eager Load Attendance
-                        $users = \App\Models\User::with([
-                            'attendances' => fn($q) => $q->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']),
+                        // Query Data User
+                        $users = User::with([
+                            'attendances' => fn($q) => $q->whereBetween('created_at', [
+                                Carbon::parse($startDate)->startOfDay(),
+                                Carbon::parse($endDate)->endOfDay()
+                            ])->with('permission'),
                             'position',
                             'schedules.office'
                         ])
                             ->whereHas('roles', fn($q) => $q->where('name', 'karyawan'))
-                            ->when($officeIds, function ($query, $ids) {
-                                return $query->whereHas('schedules', fn($q) => $q->whereIn('office_id', $ids));
-                            })
+                            ->when($officeIds, fn($q, $ids) => $q->whereHas('schedules', fn($sq) => $sq->whereIn('office_id', $ids)))
+                            ->when($positionIds, fn($q, $ids) => $q->whereIn('position_id', $ids))
+                            ->when($statusFilter === 'hadir', fn($q) => $q->whereHas('attendances', fn($sq) => $sq->whereNotNull('start_time')))
+                            ->when($statusFilter === 'terlambat', fn($q) => $q->whereHas('attendances', fn($sq) => $sq->whereRaw('TIME(start_time) > TIME(schedule_start_time)')))
+                            ->orderBy('name')
                             ->get()
-                            ->unique('id'); // Pastikan tidak ada user double di PDF
+                            ->unique('id');
 
-                        $dates = iterator_to_array(CarbonPeriod::create($startDate, $endDate));
+                        $dates = CarbonPeriod::create($startDate, $endDate)->toArray();
 
-                        // 5. Generate PDF dengan kertas Legal Landscape
+                        // Generate PDF
                         $pdf = Pdf::loadView('exports.pdf.absensi_rekap', [
                             'users' => $users,
                             'dates' => $dates,
-                            'title' => 'REKAPITULASI ABSENSI KARYAWAN'
+                            'title' => 'REKAPITULASI ABSENSI KARYAWAN',
+                            'startDate' => $startDate,
+                            'endDate' => $endDate,
                         ])->setPaper('legal', 'landscape');
 
-                        // 6. Download dengan Nama File Dinamis
-                        $fileName = "Rekap_{$areaString}_{$dateRange}.pdf";
+                        $fileName = "Rekap_Absensi_{$areaString}_{$dateRange}.pdf";
 
                         return response()->streamDownload(fn() => print($pdf->output()), $fileName);
                     }),
-            ]);
+            ])
+            ->defaultSort('created_at', 'desc');
     }
 
     public static function getPages(): array
     {
-        return ['index' => Pages\ManageLaporanAbsensis::route('/')];
+        return [
+            'index' => Pages\ManageLaporanAbsensis::route('/'),
+        ];
     }
 }
